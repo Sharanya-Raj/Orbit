@@ -1,31 +1,50 @@
-import sounddevice as sd
+import pyaudio
 import numpy as np
 import whisper
 
 # Global flag for recording state
 is_recording = False
 audio_data = []
+pa = None
+stream = None
 
 def get_model():
     # Load whisper model (tiny for speed, base/small for better accuracy)
     return whisper.load_model("tiny")
 
-def start_recording():
+def _callback(in_data, frame_count, time_info, status):
     global is_recording, audio_data
+    if is_recording:
+        chunk = np.frombuffer(in_data, dtype=np.float32)
+        audio_data.append(chunk)
+    return (in_data, pyaudio.paContinue)
+
+def start_recording():
+    global is_recording, audio_data, pa, stream
     is_recording = True
     audio_data = []
     
-    def callback(indata, frames, time, status):
-        if is_recording:
-            audio_data.append(indata.copy())
-            
-    # Standard recording settings
-    # whisper expects 16000Hz, mono
-    sd.InputStream(samplerate=16000, channels=1, callback=callback).start()
+    pa = pyaudio.PyAudio()
+    stream = pa.open(format=pyaudio.paFloat32,
+                     channels=1,
+                     rate=16000,
+                     input=True,
+                     frames_per_buffer=1024,
+                     stream_callback=_callback)
+    stream.start_stream()
 
 def stop_recording() -> np.ndarray:
-    global is_recording, audio_data
+    global is_recording, audio_data, pa, stream
     is_recording = False
+    
+    if stream is not None:
+        stream.stop_stream()
+        stream.close()
+        stream = None
+        
+    if pa is not None:
+        pa.terminate()
+        pa = None
     
     # Wait for the stream to fully process the last chunk
     if len(audio_data) > 0:

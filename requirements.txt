@@ -1,6 +1,6 @@
 openai
 pynput
-sounddevice
+PyAudio
 numpy
 openai-whisper
 playwright
