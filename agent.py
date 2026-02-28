@@ -84,6 +84,10 @@ decision_client = openai.OpenAI(
     api_key=os.environ.get("FEATHERLESS_API_KEY", ""),
 )
 
+# #Check if the API keys are loaded
+# print("OpenRouter API Key:", os.environ.get("OPENROUTER_API_KEY"))
+# print("Featherless API Key:", os.environ.get("FEATHERLESS_API_KEY"))    
+
 def run_agent(instruction: str, update_log_callback=None) -> str:
     """Runs the main perception-action loop to execute the user instruction."""
     if update_log_callback:
@@ -104,7 +108,7 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
                 update_log_callback("[System] Analyzing screen...")
                 
             vision_response = vision_client.chat.completions.create(
-                model="google/gemini-flash-1.5",
+                model="google/gemini-3-flash-preview",
                 messages=[
                     {"role": "system", "content": VISION_PROMPT.strip()},
                     {
@@ -137,7 +141,7 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
                 update_log_callback("[System] Deciding action...")
 
             response = decision_client.chat.completions.create(
-                model="deepseek-ai/DeepSeek-V3-0324",  # Featherless uses HuggingFace-style IDs
+                model="deepseek/deepseek-chat-v3-0324",  # Featherless uses HuggingFace-style IDs
                 messages=decision_messages,
                 max_tokens=256,
             )
@@ -188,3 +192,7 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
             return "Task failed due to an error."
 
     return "Maximum steps reached."
+
+
+if __name__ == "__main__":
+    run_agent("Open Google Chrome")
