@@ -22,18 +22,13 @@ def _callback(in_data, frame_count, time_info, status):
     return (in_data, pyaudio.paContinue)
 
 def start_recording():
-    global is_recording, audio_data, pa, stream
+    global is_recording, audio_data, pa, stream, actual_samplerate
     is_recording = True
     audio_data = []
 
-    # Get default microphone details to avoid capability errors
-    device_info = sd.query_devices(kind='input')
-    actual_samplerate = int(device_info['default_samplerate'])
-    
-    # A regular computer mic might be stereo (2 channels). We handle it by recording at max supported (up to 2) and mixing it.
-    channels = min(2, device_info['max_input_channels']) or 1
-    
+    actual_samplerate = 16000
     pa = pyaudio.PyAudio()
+    
     stream = pa.open(format=pyaudio.paFloat32,
                      channels=1,
                      rate=16000,
@@ -58,15 +53,6 @@ def stop_recording() -> np.ndarray:
     # Wait for the stream to fully process the last chunk
     if len(audio_data) > 0:
         audio = np.concatenate(audio_data, axis=0).flatten()
-        
-        # Whisper strictly expects 16000Hz exactly. Resample using numpy if we recorded at e.g. 48000Hz or 44100Hz.
-        if actual_samplerate != 16000:
-            duration = len(audio) / actual_samplerate
-            target_len = int(duration * 16000)
-            x_old = np.linspace(0, duration, len(audio))
-            x_new = np.linspace(0, duration, target_len)
-            audio = np.interp(x_new, x_old, audio)
-            
         return audio
         
     return np.array([])
