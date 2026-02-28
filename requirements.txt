@@ -1,0 +1,8 @@
+openai
+pynput
+sounddevice
+numpy
+openai-whisper
+playwright
+pyautogui
+python-dotenv
