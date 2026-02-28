@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 import openai
 from actions import os_control, execute_action
 from core import tts, state
+import pygame
 
 # Cross-thread mechanism for pausing the agent and receiving a user voice reply
 user_reply_event = threading.Event()
@@ -59,6 +60,7 @@ CRITICAL: For EVERY interactable element you list, you MUST provide its spatial 
 Example: `[150, 400, 200, 500] "Submit" button`
 Do not guess what the user wants to do, just describe what you see accurately.
 CRITICAL: Explicitly state the name of the currently active/focused application or window at the beginning of your description.
+CRITICAL: You MUST explicitly classify the active window as either a "BROWSER" or a "DESKTOP_APP". To classify as a "BROWSER", the window MUST have typical browser UI elements like a URL address bar at the top, browser tabs, and navigation buttons. If it lacks a URL address bar and tabs, explicitly classify it as a "DESKTOP_APP" (even if it's an app like Spotify or Discord).
 """
 
 SYSTEM_PROMPT = """
@@ -81,13 +83,14 @@ Available actions:
 
 Rules:
 - Provide a "context" field: use "browser" ONLY if interacting with a web page via open_url or click_element. Use "os" for EVERYTHING else (Desktop apps, Discord, Settings, etc).
-- OS Navigation (coordinates): The vision module provides bounding boxes in [ymin, xmin, ymax, xmax] normalized to 1000.
-  To click a desktop icon or native app (like Discord), calculate the center coordinate (min+max)/2 and output {"type": "click_xy", "x": 100, "y": 200, "context": "os"}. DO NOT use click_element for desktop apps.
-- Web Browser Navigation (Text Matching): If acting inside a web page (or just opened one via open_url), 
+  * CRITICAL CONTEXT CHECK: If the vision description classifies the active application as a "DESKTOP_APP" (like Spotify, Discord, VS Code), YOU MUST use "os" context and OS actions.
+  * ONLY use "browser" and browser actions if the active application is explicitly classified as a "BROWSER" (has a URL bar) AND you are on a webpage.
+- OS Navigation (coordinates): For ANY element in a DESKTOP_APP, you MUST use {"type": "click_xy", "x": 100, "y": 200, "context": "os"}. Calculate the center coordinate (min+max)/2 using the provided bounding box. DO NOT use click_element for desktop apps.
+- Web Browser Navigation (Text Matching): If acting inside a BROWSER web page, 
   DO NOT use click_xy. Instead, use click_element and pass the EXACT text of the button or link as the 'selector', with "context": "browser".
 - Return exactly ONE action per JSON response.
 - Verify the previous action succeeded before moving to the next step.
-- Use win_key + type_text + press_key("Enter") to open desktop apps. Ensure you type the full exact name if searching.
+- Use the "open_app" action to open desktop apps or switch to them if they're already running. Ensure you provide the app name.
 - Always end with the "done" type and a spoken summary for the user.
 
 SAFEGUARDS (CRITICAL):
@@ -198,7 +201,6 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
                 try:
                     # We might need to initialize pygame mixer here if not already done,
                     # but it's safe to call init() multiple times
-                    import pygame
                     pygame.mixer.init()
                     pygame.mixer.music.load("sounds/Note_block_chime_scale.ogg")
                     pygame.mixer.music.play()
@@ -273,7 +275,8 @@ if __name__ == "__main__":
     # Fake transcript that bypasses the broken Audio module
     # fake_transcript = "Open Google Docs in the browser and create a new blank document."
     
-    fake_transcript = "Open Discord and send a message to Sharanya saying Hi"
+    # fake_transcript = "Open Discord and send a message to Sharanya saying Hi"
+    fake_transcript = "Open Spotify and play WHAT IS LOVE by TWICE"
     print(f"Submitting Fake Transcript: '{fake_transcript}'\n")
     
     try:
