@@ -3,12 +3,13 @@ def open_url(page, url: str):
     page.goto(url, wait_until="networkidle")
 
 def click_element(page, selector: str):
-    """Clicks an element matching the CSS selector or aria label."""
+    """Clicks an element matching the CSS selector or exact text."""
     try:
-        page.click(selector, timeout=5000)
+        # First try as a standard CSS selector
+        page.click(selector, timeout=2000)
     except:
-        # Fallback to try a relaxed text selector if strictly CSS fails
-        page.get_by_text(selector).first.click(timeout=3000)
+        # If it fails (which it often will since DeepSeek is passing plain text), click by text
+        page.get_by_text(selector, exact=False).first.click(timeout=3000)
 
 def type_text(page, text: str):
     """Types text at the current focused element."""

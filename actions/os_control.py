@@ -16,8 +16,14 @@ def press_shortcut(*keys):
     pyautogui.hotkey(*keys)
 
 def move_and_click(x: int, y: int):
-    """Moves the mouse to specific coordinates and clicks."""
-    pyautogui.click(x, y)
+    """
+    Moves the mouse to specific coordinates and clicks.
+    Agent expects x and y to be normalized coordinates from 0 to 1000 based on Gemini vision boxes.
+    """
+    screen_width, screen_height = pyautogui.size()
+    real_x = int((x / 1000) * screen_width)
+    real_y = int((y / 1000) * screen_height)
+    pyautogui.click(real_x, real_y)
 
 def take_screenshot() -> str:
     """Captures the screen and returns a base64 encoded PNG string."""
