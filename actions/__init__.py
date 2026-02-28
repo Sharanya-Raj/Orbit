@@ -36,7 +36,11 @@ def execute_action(action: dict, page=None, browser_context=None):
         # OS-only actions
         case "open_app":  os_control.open_app(action["app"])
         case "win_key":   os_control.press_win_key()
-        case "click_xy":  os_control.move_and_click(action.get("x", 0), action.get("y", 0))
+        case "click_box":
+            bbox = action.get("bbox", [0, 0, 0, 0])
+            cx = (bbox[1] + bbox[3]) / 2.0
+            cy = (bbox[0] + bbox[2]) / 2.0
+            os_control.move_and_click(cx, cy)
 
         # General actions
         case "speak":      tts.speak(action["text"])

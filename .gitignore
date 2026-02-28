@@ -9,3 +9,6 @@ actions/__pycache__
 /.browser_profile/*
 .browser_profile/
 
+*.png
+
+/logs/
