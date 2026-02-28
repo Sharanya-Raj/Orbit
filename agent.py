@@ -7,7 +7,7 @@ import base64
 from pathlib import Path
 from dotenv import load_dotenv
 import openai
-from actions import os_control, execute_action
+from actions import os_control, execute_action, browser
 from core import tts, state
 
 # Cross-thread mechanism for pausing the agent and receiving a user voice reply
@@ -17,38 +17,38 @@ user_reply_text = ""
 # Load environment variables
 load_dotenv()
 
-# We try to load Playwright, but it might not be initialized if we're only doing OS actions
+import traceback
+
 try:
     from playwright.sync_api import sync_playwright
 except ImportError:
     pass
 
-# Path to store persistent browser profile (cookies, sessions, etc.)
-PROFILE_DIR = Path(__file__).parent / ".browser_profile"
-PROFILE_DIR.mkdir(exist_ok=True)
-
-# Global Playwright state for lazy loading
+# Global Playwright state
 browser_instance = None
 browser_context = None
 page_instance = None
 
 def get_browser_page():
-    """Lazily initializes a persistent Edge browser — cookies and sessions are saved between runs."""
-    global browser_instance, browser_context, page_instance
-    if page_instance is None:
-        p = sync_playwright().start()
-        # channel="msedge" opens Microsoft Edge instead of Chromium
-        browser_context = p.chromium.launch_persistent_context(
-            user_data_dir=str(PROFILE_DIR),
-            headless=False,
-            channel="msedge",
-        )
-        page_instance = browser_context.pages[0] if browser_context.pages else browser_context.new_page()
-        # Clear any stale tab state from the previous session
-        page_instance.goto("about:blank")
-
-    return page_instance
-
+    """Lazily attaches to the running Chrome/Edge instance over CDP to extract DOM."""
+    global browser_instance, browser_context
+    try:
+        if browser_instance is None or not browser_instance.is_connected():
+            p = sync_playwright().start()
+            browser_instance = p.chromium.connect_over_cdp("http://localhost:9222")
+            
+        # Always fetch the most recent active page, as users might close/open tabs
+        contexts = browser_instance.contexts
+        if not contexts: return None
+        pages = contexts[0].pages
+        if not pages: return None
+        
+        # Return the last active page
+        return pages[-1]
+    except Exception as e:
+        # Expected if browser isn't open yet or wasn't launched with debugging port
+        browser_instance = None
+        return None
 
 VISION_PROMPT = """
 You are acting as the eyes for an AI computer-control agent.
@@ -63,51 +63,53 @@ CRITICAL: Explicitly state the name of the currently active/focused application 
 
 SYSTEM_PROMPT = """
 You are an AI computer-control agent helping blind users operate their computer by voice.
-
 You will be provided with a text description of the current screen (from your vision module) and the user's goal.
 Respond ONLY with a single JSON action object — no prose, no markdown, no fences.
 
-Available actions:
-  {"type": "open_url",            "url": "https://...", "context": "browser"}
-  {"type": "click_element",       "selector": "exact-text-of-button-or-link", "context": "browser"}
-  {"type": "click_xy",            "x": 100, "y": 200, "context": "os"}
-  {"type": "type_text",           "text": "...", "context": "os"}
-  {"type": "press_key",           "key": "Enter", "context": "os"}
-  {"type": "open_app",            "app": "chrome", "context": "os"}
-  {"type": "win_key",             "context": "os"}
-  {"type": "wait",                "ms": 1500, "context": "os"}
-  {"type": "speak",               "text": "saying something to the user", "context": "os"}
-  {"type": "request_user_input",  "prompt": "spoken instruction for the user", "context": "os"}
-  {"type": "done",                "message": "summary of what was done", "context": "os"}
+Available actions (must include a "thought" explaining your plan):
+  {"thought": "I need to click the search bar...", "type": "click_xy", "x": 100, "y": 200, "context": "os"}
+  {"thought": "Typing the URL into the bar...", "type": "type_text", "text": "...", "context": "os"}
+  {"thought": "Pressing Enter to search...", "type": "press_key", "key": "Enter", "context": "os"}
+  {"thought": "Opening Run dialog...", "type": "press_shortcut", "keys": ["win", "r"], "context": "os"}
+  {"thought": "Waiting for app to load...", "type": "wait", "ms": 1500, "context": "os"}
+  {"thought": "Saying hello...", "type": "speak", "text": "saying something to the user", "context": "os"}
+  {"thought": "Need user to log in...", "type": "request_user_input", "prompt": "spoken instruction for the user", "context": "os"}
+  {"thought": "Goal achieved.", "type": "done", "message": "summary of what was done", "context": "os"}
 
 Rules — follow this decision tree EVERY time:
 
-STEP 1: Is the goal to visit a website or use a web service (Google Docs, Gmail, YouTube, any .com)?
-  → YES: Immediately use open_url with the correct URL. DO NOT use win_key, open_app, or search.
-         Examples: Google Docs → https://docs.google.com, Gmail → https://mail.google.com
-  → NO: Continue to Step 2.
+1. BROWSING THE WEB:
+   - To open the browser, you MUST use the Windows Run dialog to enable debugging ports. DO NOT use the Start Menu search for Chrome.
+   - First, `press_shortcut` with keys `["win", "r"]`.
+   - Wait 1000ms, then `type_text` exactly: `chrome --remote-debugging-port=9222` and press Enter. This is CRITICAL so we can attach to the DOM.
+   - Wait for it to open, then click the address bar and do your search.
+   - NEVER guess coordinates. EVERY action requires the Vision module to give you the exact coordinate bounding box.
 
-STEP 2: Is a browser already open and is the current screen a web page?
-  → YES: Use click_element with the EXACT visible text of the button or link.
-         NEVER use click_xy inside a browser page.
-  → NO: Continue to Step 3.
+2. OS & DESKTOP TASKS:
+   - To click ANY native element, web button, or UI element: use `click_xy`.
+   - The Vision model provides bounding boxes in the format `[ymin, xmin, ymax, xmax]`.
+   - You MUST calculate the exact center coordinates using this formula:
+     `x = (xmin + xmax) / 2`
+     `y = (ymin + ymax) / 2`
+   - CRITICAL: Calculate the final integer values yourself BEFORE generating the JSON. Do NOT put mathematical expressions in the JSON. `x` and `y` must be numbers.
+   - Windows Search results: ALWAYS use `click_xy` to click them based on the vision module.
+   - To maximize a window, use: `{"thought": "Maximizing...", "type": "press_shortcut", "keys": ["win", "up"], "context": "os"}`
+   
+3. BROWSER DOM NAVIGATION (If inside a browser):
+   - You MUST maximize the browser as soon as you open it.
+   - You can use Playwright's `click_element` Action to click exact text on a webpage instead of `click_xy` coordinates if you want to ensure accuracy.
+   - {"thought": "Clicking the Sign In button...", "type": "click_element", "selector": "Sign In", "context": "browser"}
+   
+4. BATCHING ACTIONS:
+   - You can output a single action JSON object OR an array of action objects `[{}, {}]` to execute multiple steps quickly without waiting for a new screenshot (e.g., win_key -> type_text "chrome" -> press_key "Enter").
 
-STEP 3: This is an OS/desktop task.
-  - To open a desktop app: win_key → type_text(app name) → press_key(Enter).
-  - To click a native UI element: click_xy using bounding box center from the vision description.
-  - To type text: type_text with context "os".
-
-AUTH RULE (HIGHEST PRIORITY — overrides everything else):
-If the screen shows ANY of these: sign-in form, login page, account picker, "Create account" button,
-"Sign in", "Log in", "Email or phone", "Choose an account", "Continue with Google", "Forgot password",
-or any page where credentials are required — output request_user_input IMMEDIATELY.
-NEVER click "Create account". NEVER output done with a failure. ALWAYS hand off to the user.
-Example: {"type": "request_user_input", "prompt": "I see a sign-in page. Please sign in in the browser window, then press the hotkey and say OK when you're done.", "context": "os"}
+AUTH RULE (HIGHEST PRIORITY):
+If the screen shows ANY of these: sign-in form, login page, account picker, "Create account", "Sign in", "Log in", "Choose an account", "Continue with Google", "Forgot password", or any page where credentials are required — output `request_user_input` IMMEDIATELY to hand off to the user.
+Example: {"thought": "Log in needed", "type": "request_user_input", "prompt": "I see a sign-in page. Please sign in, then press the hotkey and say OK when you're done.", "context": "os"}
 
 General:
-- Return exactly ONE action per JSON response.
-- Only click coordinates explicitly listed in the vision description. Never guess.
-- Stay strictly on task. Do not open or click anything unrelated to the goal.
+- Return ONLY valid JSON (either a single action object or a list of action objects).
+- Only click coordinates explicitly listed in the vision description. NEVER guess or hallucinate buttons like "Open" if they are not listed. If "Open" is not listed, click the app name text itself.
 - The MOMENT the goal is achieved, output done immediately.
 - Always end with {"type": "done", "message": "spoken summary for the user"}.
 """
@@ -130,9 +132,6 @@ decision_client = openai.OpenAI(
 
 def run_agent(instruction: str, update_log_callback=None) -> str:
     """Runs the main perception-action loop to execute the user instruction."""
-    if update_log_callback:
-        update_log_callback(f"🎤 You: {instruction}")
-        
     decision_messages = [
         {"role": "system", "content": SYSTEM_PROMPT.strip()},
         {"role": "user",   "content": f"User Goal: {instruction}\nWhat's next?"}
@@ -168,17 +167,32 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
                 max_tokens=800,
             )
             screen_description = vision_response.choices[0].message.content.strip()
+            # --- DOM Extraction Injection ---
+            dom_context = ""
+            if "chrome" in screen_description.lower() or "edge" in screen_description.lower():
+                try:
+                    page = get_browser_page()
+                    if page:
+                        affordances = browser.extract_affordances(page)
+                        # Truncate affordances if there are too many to save tokens
+                        if len(affordances) > 50:
+                            affordances = affordances[:50]
+                        dom_context = f"\n[DOM Context - {len(affordances)} Clickable Elements Available]:\n{json.dumps(affordances)}"
+                except Exception as e:
+                    print(f"Failed to extract DOM: {e}")
+                    pass
+                    
             print(f"\n[Vision Model Screen Description]:\n{screen_description}\n")
             
         except Exception as e:
             error_msg = f"Error in vision module: {str(e)}"
             if update_log_callback:
                 update_log_callback(error_msg)
-            print(error_msg)
+            print(error_msg + "\n" + traceback.format_exc())
             return "Task failed at vision step due to an error."
 
         # 3. Add vision context to decision messages
-        screen_update = f"Current Screen Description:\n{screen_description}\n\nUser Goal: {instruction}\nWhat should I do next? (Reply only with JSON)"
+        screen_update = f"Current Screen Description:\n{screen_description}{dom_context}\n\nUser Goal: {instruction}\nWhat should I do next? (Reply only with JSON)"
         if just_resumed_from_input:
             # After user input confirmation, APPEND the screen update (never overwrite the confirmation)
             decision_messages.append({"role": "user", "content": screen_update})
@@ -197,83 +211,96 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
             response = decision_client.chat.completions.create(
                 model="deepseek-ai/DeepSeek-V3-0324",  # HuggingFace-style ID required by Featherless
                 messages=decision_messages,
-                max_tokens=256,
+                max_tokens=1500,
             )
             
             raw_content = response.choices[0].message.content.strip()
             print(f"\n[Decision Model Raw Response]:\n{raw_content}\n")
             
             # Clean up potential markdown formatting and extra conversational text
-            start_idx = raw_content.find('{')
-            end_idx = raw_content.rfind('}')
-            if start_idx != -1 and end_idx != -1:
+            start_dict = raw_content.find('{')
+            start_list = raw_content.find('[')
+            end_dict = raw_content.rfind('}')
+            end_list = raw_content.rfind(']')
+            
+            starts = [i for i in (start_dict, start_list) if i != -1]
+            ends = [i for i in (end_dict, end_list) if i != -1]
+            
+            if starts and ends:
+                start_idx = min(starts)
+                end_idx = max(ends)
                 raw_content = raw_content[start_idx:end_idx+1]
                 
             raw_content = raw_content.strip()
-            action = json.loads(raw_content)
-            print(f"[Parsed Action]: {json.dumps(action)}")
             
-            if update_log_callback:
-                update_log_callback(f"🤖 Agent: {json.dumps(action)}")
-
-            if action["type"] == "done":
-                # Play the completion sound
-                try:
-                    # We might need to initialize pygame mixer here if not already done,
-                    # but it's safe to call init() multiple times
-                    import pygame
-                    pygame.mixer.init()
-                    pygame.mixer.music.load("sounds/Note_block_chime_scale.ogg")
-                    pygame.mixer.music.play()
-                except Exception as e:
-                    print(f"Failed to play finish sound: {e}")
+            try:
+                action_data = json.loads(raw_content)
+            except json.JSONDecodeError:
+                # Fallback: LLMs often leave trailing commas `},]` which breaks json.loads
+                # but works perfectly in Python's ast.literal_eval
+                import ast
+                action_data = ast.literal_eval(raw_content)
+            
+            # Convert single action to a list for uniform processing
+            actions = action_data if isinstance(action_data, list) else [action_data]
+            
+            for action in actions:
+                print(f"[Parsed Action]: {json.dumps(action)}")
+                
+                # Log the thought process first so the user can read it
+                thought = action.get("thought", "")
+                if thought and update_log_callback:
+                    update_log_callback(f"🧠 Thinking: {thought}")
                     
-                msg = action.get("message", "Done.")
-                tts.speak(msg)
-                return msg
-
-            if action["type"] == "speak":
-                tts.speak(action["text"])
-
-            if action["type"] == "request_user_input":
-                # Speak the prompt so the user knows what to type
-                prompt = action.get("prompt", "Please provide input, then press OK on the widget.")
-                tts.speak(prompt)
                 if update_log_callback:
-                    update_log_callback(f"⌨️ Waiting for user input: {prompt}")
+                    update_log_callback(f"🤖 Action: {action.get('type')}")
 
-                # Signal the widget to switch to input-waiting mode
-                state.state.set_state("waiting_for_input")
+                if action["type"] == "done":
+                    # Play the completion sound
+                    try:
+                        import pygame
+                        pygame.mixer.init()
+                        pygame.mixer.music.load("sounds/Note_block_chime_scale.ogg")
+                        pygame.mixer.music.play()
+                    except Exception as e:
+                        print(f"Failed to play finish sound: {e}")
+                        
+                    msg = action.get("message", "Done.")
+                    tts.speak(msg)
+                    return msg
 
-                # Block this thread until widget provides the user's voice reply
-                user_reply_event.clear()
-                user_reply_event.wait(timeout=120)  # 2-min timeout
+                if action["type"] == "speak":
+                    tts.speak(action["text"])
 
-                reply = user_reply_text.strip() or "done"
-                if update_log_callback:
-                    update_log_callback(f"🎤 User replied: {reply}")
+                if action["type"] == "request_user_input":
+                    prompt = action.get("prompt", "Please provide input, then press OK on the widget.")
+                    tts.speak(prompt)
+                    if update_log_callback:
+                        update_log_callback(f"⌨️ Waiting for user input: {prompt}")
 
-                # Inject reply — strongly tell DeepSeek the step is complete and to move forward
-                decision_messages.append({"role": "assistant", "content": json.dumps(action)})
-                decision_messages.append({"role": "user", "content": f"User confirmed (said: '{reply}'). ASSUME THIS STEP IS COMPLETE. Proceed to the NEXT action toward the goal. Do NOT use request_user_input again."})
-                just_resumed_from_input = True  # next iteration must APPEND screen, not overwrite
-                continue  # Skip execute_action, go to next iteration
+                    state.state.set_state("waiting_for_input")
+                    user_reply_event.clear()
+                    user_reply_event.wait(timeout=120)
 
-            # 5. Execute the action
-            # IMPORTANT: only route browser-specific actions to Playwright.
-            # OS actions (win_key, type_text, click_xy, press_key) must ALWAYS go to pyautogui,
-            # even when the browser is already open.
-            active_page = None
-            if action["type"] in ["open_url", "click_element"]:
-                active_page = get_browser_page()
+                    reply = user_reply_text.strip() or "done"
+                    if update_log_callback:
+                        update_log_callback(f"🎤 User replied: {reply}")
 
-            execute_action(action, page=active_page, browser_context=browser_context)
+                    decision_messages.append({"role": "assistant", "content": json.dumps(action)})
+                    decision_messages.append({"role": "user", "content": f"User confirmed (said: '{reply}'). ASSUME THIS STEP IS COMPLETE. Proceed to the NEXT action toward the goal. Do NOT use request_user_input again."})
+                    just_resumed_from_input = True
+                    break  # Stop processing the rest of the batch and get a new vision screenshot
 
-            
-            time.sleep(0.8)  # Let UI settle before next frame
+                # 5. Execute OS action
+                active_page = None
+                if action["type"] == "click_element":
+                    active_page = get_browser_page()
+                    
+                execute_action(action, page=active_page)
+                time.sleep(1.0)  # Sleep between batched actions so OS UI can catch up
 
-            # Append the cycle log
-            decision_messages.append({"role": "assistant", "content": str(action)})
+            # Append the cycle log (the whole batch)
+            decision_messages.append({"role": "assistant", "content": json.dumps(action_data)})
             decision_messages.append({"role": "user", "content": "Action complete. What's next?"})
 
         except Exception as e:

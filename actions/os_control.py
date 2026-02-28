@@ -24,6 +24,10 @@ def move_and_click(x: int, y: int):
     screen_width, screen_height = pyautogui.size()
     real_x = int((x / 1000) * screen_width)
     real_y = int((y / 1000) * screen_height)
+    
+    # Move the mouse first so hover states can register, then click
+    pyautogui.moveTo(real_x, real_y, duration=0.2)
+    time.sleep(0.5)
     pyautogui.click(real_x, real_y)
 
 def take_screenshot() -> str:
