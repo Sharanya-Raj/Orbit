@@ -11,8 +11,8 @@ pa = None
 stream = None
 
 def get_model():
-    # Load whisper model (tiny for speed, base/small for better accuracy)
-    return whisper.load_model("tiny")
+    # 'base' is significantly more accurate than 'tiny' with acceptable speed
+    return whisper.load_model("base")
 
 def _callback(in_data, frame_count, time_info, status):
     global is_recording, audio_data
@@ -74,8 +74,8 @@ def transcribe(audio_array: np.ndarray, model=None) -> str:
     # make log-Mel spectrogram and move to the same device as the model
     mel = whisper.log_mel_spectrogram(audio).to(model.device)
     
-    # decode the audio
-    options = whisper.DecodingOptions(fp16=False)
+    # decode the audio — lock to English to prevent language misidentification
+    options = whisper.DecodingOptions(fp16=False, language="en")
     result = whisper.decode(model, mel, options)
     
     return result.text

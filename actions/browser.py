@@ -3,13 +3,23 @@ def open_url(page, url: str):
     page.goto(url, wait_until="networkidle")
 
 def click_element(page, selector: str):
-    """Clicks an element matching the CSS selector or exact text."""
-    try:
-        # First try as a standard CSS selector
-        page.click(selector, timeout=2000)
-    except:
-        # If it fails (which it often will since DeepSeek is passing plain text), click by text
-        page.get_by_text(selector, exact=False).first.click(timeout=3000)
+    """Clicks an element by text via a priority waterfall of Playwright strategies."""
+    strategies = [
+        lambda: page.get_by_role("button",  name=selector, exact=False).first.click(timeout=2000),
+        lambda: page.get_by_role("link",    name=selector, exact=False).first.click(timeout=2000),
+        lambda: page.get_by_role("textbox", name=selector, exact=False).first.click(timeout=2000),
+        lambda: page.get_by_role("menuitem",name=selector, exact=False).first.click(timeout=2000),
+        lambda: page.get_by_text(selector,  exact=False).first.click(timeout=2000),
+        lambda: page.click(selector, timeout=2000),
+    ]
+    last_err = None
+    for strategy in strategies:
+        try:
+            strategy()
+            return
+        except Exception as e:
+            last_err = e
+    raise Exception(f"click_element failed for '{selector}': {last_err}")
 
 def type_text(page, text: str):
     """Types text at the current focused element."""

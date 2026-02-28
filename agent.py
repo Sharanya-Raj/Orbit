@@ -1,11 +1,18 @@
 import os
 import json
 import time
+import re
+import threading
 import base64
+from pathlib import Path
 from dotenv import load_dotenv
 import openai
 from actions import os_control, execute_action
 from core import tts, state
+
+# Cross-thread mechanism for pausing the agent and receiving a user voice reply
+user_reply_event = threading.Event()
+user_reply_text = ""
 
 # Load environment variables
 load_dotenv()
@@ -16,19 +23,30 @@ try:
 except ImportError:
     pass
 
+# Path to store persistent browser profile (cookies, sessions, etc.)
+PROFILE_DIR = Path(__file__).parent / ".browser_profile"
+PROFILE_DIR.mkdir(exist_ok=True)
+
 # Global Playwright state for lazy loading
 browser_instance = None
 browser_context = None
 page_instance = None
 
 def get_browser_page():
-    """Lazily initializes the Playwright browser when needed."""
+    """Lazily initializes a persistent Edge browser — cookies and sessions are saved between runs."""
     global browser_instance, browser_context, page_instance
     if page_instance is None:
         p = sync_playwright().start()
-        browser_instance = p.chromium.launch(headless=False)
-        browser_context = browser_instance.new_context()
-        page_instance = browser_context.new_page()
+        # channel="msedge" opens Microsoft Edge instead of Chromium
+        browser_context = p.chromium.launch_persistent_context(
+            user_data_dir=str(PROFILE_DIR),
+            headless=False,
+            channel="msedge",
+        )
+        page_instance = browser_context.pages[0] if browser_context.pages else browser_context.new_page()
+        # Clear any stale tab state from the previous session
+        page_instance.goto("about:blank")
+
     return page_instance
 
 
@@ -194,15 +212,39 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
             if action["type"] == "speak":
                 tts.speak(action["text"])
 
+            if action["type"] == "request_user_input":
+                # Speak the prompt so the user knows what to type
+                prompt = action.get("prompt", "Please provide input, then press OK on the widget.")
+                tts.speak(prompt)
+                if update_log_callback:
+                    update_log_callback(f"⌨️ Waiting for user input: {prompt}")
+
+                # Signal the widget to switch to input-waiting mode
+                state.state.set_state("waiting_for_input")
+
+                # Block this thread until widget provides the user's voice reply
+                user_reply_event.clear()
+                user_reply_event.wait(timeout=120)  # 2-min timeout
+
+                reply = user_reply_text.strip() or "done"
+                if update_log_callback:
+                    update_log_callback(f"🎤 User replied: {reply}")
+
+                # Inject reply into conversation so agent knows user completed the step
+                decision_messages.append({"role": "assistant", "content": json.dumps(action)})
+                decision_messages.append({"role": "user", "content": f"User said: '{reply}'. Now continue."})
+                continue  # Skip execute_action, go to next iteration
+
             # 5. Execute the action
+            # IMPORTANT: only route browser-specific actions to Playwright.
+            # OS actions (win_key, type_text, click_xy, press_key) must ALWAYS go to pyautogui,
+            # even when the browser is already open.
             active_page = None
-            context = action.get("context", "os")
-            
-            if context == "browser" and action["type"] in ["open_url", "click_element", "type_text", "press_key"]:
-                # If they ask to navigate the web, or if browser is already open, pass the page
+            if action["type"] in ["open_url", "click_element"]:
                 active_page = get_browser_page()
-                
+
             execute_action(action, page=active_page, browser_context=browser_context)
+
             
             time.sleep(0.8)  # Let UI settle before next frame
 
