@@ -62,12 +62,14 @@ class VoiceWidget:
         self.msg_queue = queue.Queue()
         
         # Register global hotkey
+        print("Registering global hotkey...")
         hotkey.listen(self.on_hotkey)
         
         # State tick loop
         self.update_ui()
         
         self.set_ui_state("idle")
+        print("Initialization complete. Widget is ready.")
 
     def start_drag(self, event):
         self.x_offset = event.x
@@ -111,6 +113,7 @@ class VoiceWidget:
 
     def on_hotkey(self):
         current_state = state.state.get_state()
+        print(f"[Hotkey] Pressed. Current state is: {current_state}")
         
         if current_state == "idle" or current_state == "done":
             # Start Recording
@@ -160,6 +163,15 @@ class VoiceWidget:
 
 
 if __name__ == "__main__":
+    print("Starting Orbit Voice Assistant...")
     root = tk.Tk()
+    print("Initializing GUI window...")
     app = VoiceWidget(root)
-    root.mainloop()
+    print("==========================================================")
+    print("Widget started! Look for the small floating pill at the top of your screen.")
+    print("Press Ctrl+Shift+Space to start recording.")
+    print("==========================================================")
+    try:
+        root.mainloop()
+    except KeyboardInterrupt:
+        print("\nExiting...")
