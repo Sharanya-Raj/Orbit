@@ -10,12 +10,30 @@ def execute_action(action: dict, page=None, browser_context=None):
     match action["type"]:
         case "click_element":
             if page: browser.click_element(page, action["selector"])
-        case "press_shortcut": os_control.press_shortcut(*action["keys"])
-        case "type_text":  os_control.type_text(action["text"])
-        case "press_key":  os_control.press_single_key(action["key"])
-        case "open_app":   os_control.open_app(action["app"])
-        case "win_key":    os_control.press_win_key()
-        case "click_xy":   os_control.move_and_click(action.get("x", 0), action.get("y", 0))
+
+        # Dual-context actions — routed by context field
+        case "type_text":
+            if use_browser:
+                browser.type_text(page, action["text"])
+            else:
+                os_control.type_text(action["text"])
+
+        case "press_key":
+            if use_browser:
+                browser.press_key(page, action["key"])
+            else:
+                os_control.press_single_key(action["key"])
+
+        # OS-only actions
+        case "open_app":  os_control.open_app(action["app"])
+        case "win_key":   os_control.press_win_key()
+        case "click_box":
+            bbox = action.get("bbox", [0, 0, 0, 0])
+            cx = (bbox[1] + bbox[3]) / 2.0
+            cy = (bbox[0] + bbox[2]) / 2.0
+            os_control.move_and_click(cx, cy)
+
+        # General actions
         case "speak":      tts.speak(action["text"])
         case "wait":       time.sleep(action.get("ms", 1000) / 1000.0)
         case "screenshot": pass

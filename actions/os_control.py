@@ -4,13 +4,68 @@ import io
 import base64
 import subprocess
 import time
+import pygetwindow as gw
 
 # Disable pyautogui fail-safe (moving mouse to corner stops script)
 pyautogui.FAILSAFE = False
 
+import ctypes
+import os
+
+def _get_process_name(hwnd):
+    try:
+        pid = ctypes.c_ulong()
+        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        h_process = ctypes.windll.kernel32.OpenProcess(0x0400 | 0x0010, False, pid.value)
+        if not h_process: return ""
+        exe_name = ctypes.create_unicode_buffer(260)
+        size = ctypes.c_ulong(260)
+        psapi = ctypes.WinDLL('psapi')
+        if psapi.GetModuleFileNameExW(h_process, None, exe_name, size.value):
+            ctypes.windll.kernel32.CloseHandle(h_process)
+            return os.path.basename(exe_name.value).lower()
+        ctypes.windll.kernel32.CloseHandle(h_process)
+    except:
+        pass
+    return ""
+
 def open_app(name: str):
-    """Opens an application through the shell."""
-    subprocess.Popen(["start", name], shell=True)
+    """Opens an application by navigating to it if already open, else uses the start menu."""
+    try:
+        search_name = name.lower()
+        windows = gw.getAllWindows()
+        
+        # 1. Try to find by exact visual title match
+        for w in windows:
+            if w.title and search_name in w.title.lower():
+                try:
+                    w.activate()
+                    time.sleep(0.5)
+                    return
+                except Exception:
+                    pass
+                    
+        # 2. Try to find by process executable name
+        # Handles cases like Spotify where window title changes to the song name
+        for w in windows:
+            if w.title and w.visible:
+                proc_name = _get_process_name(w._hWnd)
+                if proc_name and (search_name in proc_name or proc_name.startswith(search_name)):
+                    try:
+                        w.activate()
+                        time.sleep(0.5)
+                        return
+                    except Exception:
+                        pass
+    except Exception as e:
+        print(f"Error checking open windows: {e}")
+
+    # Original method of pressing windows key, typing in the name and continuing
+    press_win_key()
+    time.sleep(0.5)
+    type_text(name)
+    time.sleep(0.5)
+    press_single_key('enter')
 
 def press_shortcut(*keys):
     """Presses a combination of keys."""
@@ -23,6 +78,9 @@ def move_and_click(x: int, y: int):
     """
     screen_width, screen_height = pyautogui.size()
     real_x = int((x / 1000) * screen_width)
+    
+    # Gemini vision model bounding boxes also use top-left as (0,0), 
+    # matching pyautogui, so we don't need to invert the Y axis.
     real_y = int((y / 1000) * screen_height)
     
     # Move the mouse first so hover states can register, then click
@@ -30,9 +88,16 @@ def move_and_click(x: int, y: int):
     time.sleep(0.5)
     pyautogui.click(real_x, real_y)
 
-def take_screenshot() -> str:
+def take_screenshot(step: int = None) -> str:
     """Captures the screen and returns a base64 encoded PNG string."""
     img = pyautogui.screenshot()
+    
+    # Save original screenshot for debugging
+    import os
+    os.makedirs("debug", exist_ok=True)
+    filename = f"debug/step_{step}_original.png" if step is not None else "debug/debug_original_screenshot.png"
+    img.save(filename)
+    
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return base64.b64encode(buf.getvalue()).decode()
