@@ -96,6 +96,9 @@ class VoiceWidget:
         self.log_text.config(state=tk.DISABLED)
 
     def set_ui_state(self, new_state):
+        # Always keep the state object in sync with the UI
+        state.state.set_state(new_state)
+
         if new_state == "idle":
             self.status_label.config(text="🎙️ Orbit (Idle)", fg="#2a2a35")
             self.collapse()
@@ -109,9 +112,10 @@ class VoiceWidget:
             self.status_label.config(text="⌨️ Type it in, then press hotkey", fg="#fbbf24")
             self.expand()
         elif new_state == "done":
-            self.status_label.config(text="✅ Done", fg="#22d3a5")
-            # Auto collapse after a few seconds
-            self.root.after(3000, lambda: self.set_ui_state("idle"))
+            self.status_label.config(text="✅ Done — press hotkey for next task", fg="#22d3a5")
+            self.expand()
+            # Auto-reset to idle after 4s so next hotkey press starts fresh
+            self.root.after(4000, lambda: self.set_ui_state("idle"))
 
     def expand(self):
         """Show transcript log"""
@@ -136,6 +140,7 @@ class VoiceWidget:
                 pass  # Sound is optional — don't crash if file is missing
             
             # Start Recording
+            self._pre_record_state = current_state  # Save state before overwriting
             state.state.set_state("recording")
             self.msg_queue.put({"type": "state", "val": "recording"})
             threading.Thread(target=audio.start_recording, daemon=True).start()
