@@ -40,6 +40,7 @@ Describe the layout, all visible windows, and specifically list every interactab
 CRITICAL: For EVERY interactable element you list, you MUST provide its spatial bounding box in normalized [ymin, xmin, ymax, xmax] format out of 1000.
 Example: `[150, 400, 200, 500] "Submit" button`
 Do not guess what the user wants to do, just describe what you see accurately.
+CRITICAL: Explicitly state the name of the currently active/focused application or window at the beginning of your description.
 """
 
 SYSTEM_PROMPT = """
@@ -49,27 +50,34 @@ You will be provided with a text description of the current screen (from your vi
 Respond ONLY with a single JSON action object — no prose, no markdown, no fences.
 
 Available actions:
-  {"type": "open_url",      "url": "https://..."}
-  {"type": "click_element", "selector": "exact-text-of-button-or-link"}
-  {"type": "click_xy",      "x": 100, "y": 200}
-  {"type": "type_text",     "text": "..."}
-  {"type": "press_key",     "key": "Enter"}
-  {"type": "open_app",      "app": "chrome"}
-  {"type": "win_key"}
-  {"type": "wait",          "ms": 1500}
-  {"type": "speak",         "text": "saying something to the user"}
-  {"type": "done",          "message": "summary of what was done"}
+  {"type": "open_url",      "url": "https://...", "context": "browser"}
+  {"type": "click_element", "selector": "exact-text-of-button-or-link", "context": "browser"}
+  {"type": "click_xy",      "x": 100, "y": 200, "context": "os"}
+  {"type": "type_text",     "text": "...", "context": "os"}
+  {"type": "press_key",     "key": "Enter", "context": "os"}
+  {"type": "open_app",      "app": "chrome", "context": "os"}
+  {"type": "win_key",       "context": "os"}
+  {"type": "wait",          "ms": 1500, "context": "os"}
+  {"type": "speak",         "text": "saying something to the user", "context": "os"}
+  {"type": "done",          "message": "summary of what was done", "context": "os"}
 
 Rules:
+- Provide a "context" field: use "browser" ONLY if interacting with a web page via open_url or click_element. Use "os" for EVERYTHING else (Desktop apps, Discord, Settings, etc).
 - OS Navigation (coordinates): The vision module provides bounding boxes in [ymin, xmin, ymax, xmax] normalized to 1000.
-  To click a desktop icon or native app, calculate the center coordinate (min+max)/2 and output {"type": "click_xy", "x": 100, "y": 200}.
-- Web Browser Navigation (Text Matching): If you are currently in a browser (or opened one via open_url), 
-  DO NOT use click_xy. Instead, use click_element and pass the EXACT text of the button or link as the 'selector'. 
-  Example: {"type": "click_element", "selector": "Sign In"}
-- Return exactly ONE action per JSON response
-- Verify the previous action succeeded before moving to the next step
-- Use win_key + type_text + press_key("Enter") to open desktop apps
-- Always end with the "done" type and a spoken summary for the user
+  To click a desktop icon or native app (like Discord), calculate the center coordinate (min+max)/2 and output {"type": "click_xy", "x": 100, "y": 200, "context": "os"}. DO NOT use click_element for desktop apps.
+- Web Browser Navigation (Text Matching): If acting inside a web page (or just opened one via open_url), 
+  DO NOT use click_xy. Instead, use click_element and pass the EXACT text of the button or link as the 'selector', with "context": "browser".
+- Return exactly ONE action per JSON response.
+- Verify the previous action succeeded before moving to the next step.
+- Use win_key + type_text + press_key("Enter") to open desktop apps. Ensure you type the full exact name if searching.
+- Always end with the "done" type and a spoken summary for the user.
+
+SAFEGUARDS (CRITICAL):
+1. NEVER guess coordinates. Only click on coordinates EXPLICITLY provided by the vision module. If the target is not found, DO NOT click randomly.
+2. Verify the Active Window: If the vision module reports that an unintended application is open (e.g. Copilot, Claude) when you intended to open a different app (e.g. Discord), you MUST recognize this. Stop and declare failure, or press Window key again to restart the search. DO NOT interact with unintended applications.
+3. Stay strictly on task. Do NOT click or open anything irrelevant to the user's goal.
+4. If you are lost, stuck, or unsure what to do, use {"type": "speak", "text": "I need help finding the right element."} or {"type": "done", "message": "Failed to complete task."} to cleanly exit.
+5. STOP ON COMPLETION: The MOMENT you verify that the User Goal has been achieved, you MUST immediately output the "done" action to stop. Do not take any extra unnecessary actions.
 """
 
 
@@ -106,7 +114,8 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
         try:
             if update_log_callback:
                 update_log_callback("[System] Analyzing screen...")
-                
+            
+            print("\n[Vision] Prompting Vision Model with screen snapshot...")
             vision_response = vision_client.chat.completions.create(
                 model="google/gemini-3-flash-preview",
                 messages=[
@@ -124,6 +133,7 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
                 max_tokens=500,
             )
             screen_description = vision_response.choices[0].message.content.strip()
+            print(f"\n[Vision Model Screen Description]:\n{screen_description}\n")
             
         except Exception as e:
             error_msg = f"Error in vision module: {str(e)}"
@@ -140,6 +150,9 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
             if update_log_callback:
                 update_log_callback("[System] Deciding action...")
 
+            print(f"\n[Decision] Prompting Decision Model with Goal: '{instruction}'")
+            print(f"       and Messages Context: {json.dumps(decision_messages[-1]['content'])[:100]}...\n")
+            
             response = decision_client.chat.completions.create(
                 model="deepseek-ai/DeepSeek-V3-0324",  # HuggingFace-style ID required by Featherless
                 messages=decision_messages,
@@ -147,22 +160,33 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
             )
             
             raw_content = response.choices[0].message.content.strip()
+            print(f"\n[Decision Model Raw Response]:\n{raw_content}\n")
             
-            # Clean up potential markdown formatting from the response
-            if raw_content.startswith("```json"):
-                raw_content = raw_content[7:]
-            if raw_content.startswith("```"):
-                raw_content = raw_content[3:]
-            if raw_content.endswith("```"):
-                raw_content = raw_content[:-3]
+            # Clean up potential markdown formatting and extra conversational text
+            start_idx = raw_content.find('{')
+            end_idx = raw_content.rfind('}')
+            if start_idx != -1 and end_idx != -1:
+                raw_content = raw_content[start_idx:end_idx+1]
                 
             raw_content = raw_content.strip()
             action = json.loads(raw_content)
+            print(f"[Parsed Action]: {json.dumps(action)}")
             
             if update_log_callback:
                 update_log_callback(f"🤖 Agent: {json.dumps(action)}")
 
             if action["type"] == "done":
+                # Play the completion sound
+                try:
+                    # We might need to initialize pygame mixer here if not already done,
+                    # but it's safe to call init() multiple times
+                    import pygame
+                    pygame.mixer.init()
+                    pygame.mixer.music.load("sounds/Note_block_chime_scale.ogg")
+                    pygame.mixer.music.play()
+                except Exception as e:
+                    print(f"Failed to play finish sound: {e}")
+                    
                 msg = action.get("message", "Done.")
                 tts.speak(msg)
                 return msg
@@ -172,7 +196,9 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
 
             # 5. Execute the action
             active_page = None
-            if action["type"] in ["open_url", "click_element"] or page_instance is not None:
+            context = action.get("context", "os")
+            
+            if context == "browser" and action["type"] in ["open_url", "click_element", "type_text", "press_key"]:
                 # If they ask to navigate the web, or if browser is already open, pass the page
                 active_page = get_browser_page()
                 
@@ -193,6 +219,27 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
 
     return "Maximum steps reached."
 
+#for testing purposes
+def console_logger(msg):
+    print(msg)
 
 if __name__ == "__main__":
-    run_agent("Open Google Chrome")
+    print("==================================================")
+    print("Testing Agent Logic without Audio...")
+    print("==================================================")
+    
+    # Fake transcript that bypasses the broken Audio module
+    # fake_transcript = "Open Google Docs in the browser and create a new blank document."
+    
+    fake_transcript = "Open Discord and send a message to Sharanya saying Hi"
+    print(f"Submitting Fake Transcript: '{fake_transcript}'\n")
+    
+    try:
+        # Pass it straight into the refactored reasoning loop!
+        final_message = run_agent(fake_transcript, update_log_callback=console_logger)
+        print("\nAgent finished! Final Message:", final_message)
+        
+    except Exception as e:
+        print("\nAgent crashed during testing:", str(e))
+    
+    print("\nTest complete.")

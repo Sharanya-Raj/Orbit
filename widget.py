@@ -3,6 +3,7 @@ import threading
 import queue
 from core import hotkey, audio, state
 from agent import run_agent
+import pygame
 
 BG = '#18181c'  # widget background (transparent outer if possible)
 
@@ -116,8 +117,9 @@ class VoiceWidget:
         
         if current_state == "idle" or current_state == "done":
             # Play a short beep to indicate recording started
-            import winsound
-            winsound.Beep(1000, 200)
+            pygame.mixer.init()
+            pygame.mixer.music.load("sounds/Note_block_bell.mp3")
+            pygame.mixer.music.play()
             
             # Start Recording
             state.state.set_state("recording")
