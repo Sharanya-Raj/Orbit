@@ -1,3 +1,5 @@
 /__pycache__
 core/__pycache__
 actions/__pycache__
+
+.env
