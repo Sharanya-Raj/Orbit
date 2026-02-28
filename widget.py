@@ -3,6 +3,7 @@ import threading
 import queue
 from core import hotkey, audio, state
 from agent import run_agent
+import agent as agent_module  # needed to set user_reply_text and signal event
 
 BG = '#18181c'  # widget background (transparent outer if possible)
 
@@ -57,6 +58,7 @@ class VoiceWidget:
         
         self.x_offset = 0
         self.y_offset = 0
+        self._pre_record_state = "idle"  # tracks state before recording started
         
         # Queue for cross-thread comms
         self.msg_queue = queue.Queue()
@@ -96,6 +98,9 @@ class VoiceWidget:
         elif new_state == "thinking":
             self.status_label.config(text="🤖 Thinking...", fg="#a78bfa")
             self.expand()
+        elif new_state == "waiting_for_input":
+            self.status_label.config(text="⌨️ Type it in, then press hotkey", fg="#fbbf24")
+            self.expand()
         elif new_state == "done":
             self.status_label.config(text="✅ Done", fg="#22d3a5")
             # Auto collapse after a few seconds
@@ -114,7 +119,8 @@ class VoiceWidget:
         current_state = state.state.get_state()
         print(f"[Hotkey] Pressed. Current state is: {current_state}")
         
-        if current_state == "idle" or current_state == "done":
+        if current_state in ["idle", "done", "waiting_for_input"]:
+            self._pre_record_state = current_state  # remember what we were doing before recording
             # Play a short beep to indicate recording started
             import winsound
             winsound.Beep(1000, 200)
@@ -129,7 +135,8 @@ class VoiceWidget:
         print(f"[Hotkey] Released. Current state is: {current_state}")
         
         if current_state == "recording":
-            # Stop recording and process
+            was_waiting = self._pre_record_state == "waiting_for_input"
+            
             state.state.set_state("thinking")
             self.msg_queue.put({"type": "state", "val": "thinking"})
             
@@ -143,17 +150,24 @@ class VoiceWidget:
                     self.msg_queue.put({"type": "log", "val": f"[System] Transcript: {transcript}"})
                     print(f"\n🎤 You said: {transcript}\n")
                     
-                    # Pass to agent
-                    result = run_agent(
-                        transcript, 
-                        update_log_callback=lambda m: self.msg_queue.put({"type": "log", "val": m})
-                    )
+                    if was_waiting:
+                        # Resume the paused agent with the user's voice reply
+                        agent_module.user_reply_text = transcript
+                        agent_module.user_reply_event.set()  # unblock agent thread
+                        # Agent continues from where it left off — state will be set to done by agent
+                    else:
+                        # Normal: start a fresh agent task
+                        result = run_agent(
+                            transcript, 
+                            update_log_callback=lambda m: self.msg_queue.put({"type": "log", "val": m})
+                        )
+                        state.state.set_state("done")
+                        self.msg_queue.put({"type": "state", "val": "done"})
                 else:
                     self.msg_queue.put({"type": "log", "val": "[System] No speech detected."})
                     print("\n[System] No speech detected.\n")
-                    
-                state.state.set_state("done")
-                self.msg_queue.put({"type": "state", "val": "done"})
+                    state.state.set_state("done")
+                    self.msg_queue.put({"type": "state", "val": "done"})
 
             threading.Thread(target=process_audio, daemon=True).start()
 

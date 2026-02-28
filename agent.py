@@ -1,11 +1,18 @@
 import os
 import json
 import time
+import re
+import threading
 import base64
+from pathlib import Path
 from dotenv import load_dotenv
 import openai
 from actions import os_control, execute_action
 from core import tts, state
+
+# Cross-thread mechanism for pausing the agent and receiving a user voice reply
+user_reply_event = threading.Event()
+user_reply_text = ""
 
 # Load environment variables
 load_dotenv()
@@ -16,19 +23,30 @@ try:
 except ImportError:
     pass
 
+# Path to store persistent browser profile (cookies, sessions, etc.)
+PROFILE_DIR = Path(__file__).parent / ".browser_profile"
+PROFILE_DIR.mkdir(exist_ok=True)
+
 # Global Playwright state for lazy loading
 browser_instance = None
 browser_context = None
 page_instance = None
 
 def get_browser_page():
-    """Lazily initializes the Playwright browser when needed."""
+    """Lazily initializes a persistent Edge browser — cookies and sessions are saved between runs."""
     global browser_instance, browser_context, page_instance
     if page_instance is None:
         p = sync_playwright().start()
-        browser_instance = p.chromium.launch(headless=False)
-        browser_context = browser_instance.new_context()
-        page_instance = browser_context.new_page()
+        # channel="msedge" opens Microsoft Edge instead of Chromium
+        browser_context = p.chromium.launch_persistent_context(
+            user_data_dir=str(PROFILE_DIR),
+            headless=False,
+            channel="msedge",
+        )
+        page_instance = browser_context.pages[0] if browser_context.pages else browser_context.new_page()
+        # Clear any stale tab state from the previous session
+        page_instance.goto("about:blank")
+
     return page_instance
 
 
@@ -49,27 +67,46 @@ You will be provided with a text description of the current screen (from your vi
 Respond ONLY with a single JSON action object — no prose, no markdown, no fences.
 
 Available actions:
-  {"type": "open_url",      "url": "https://..."}
-  {"type": "click_element", "selector": "exact-text-of-button-or-link"}
-  {"type": "click_xy",      "x": 100, "y": 200}
-  {"type": "type_text",     "text": "..."}
-  {"type": "press_key",     "key": "Enter"}
-  {"type": "open_app",      "app": "chrome"}
+  {"type": "open_url",            "url": "https://..."}
+  {"type": "click_element",       "selector": "exact-text-of-button-or-link"}
+  {"type": "click_xy",            "x": 100, "y": 200}
+  {"type": "type_text",           "text": "..."}
+  {"type": "press_key",           "key": "Enter"}
+  {"type": "open_app",            "app": "notepad"}
   {"type": "win_key"}
-  {"type": "wait",          "ms": 1500}
-  {"type": "speak",         "text": "saying something to the user"}
-  {"type": "done",          "message": "summary of what was done"}
+  {"type": "wait",                "ms": 1500}
+  {"type": "speak",               "text": "saying something to the user"}
+  {"type": "request_user_input",  "prompt": "Please type your email, then say OK when done."}
+  {"type": "done",                "message": "summary of what was done"}
 
-Rules:
-- OS Navigation (coordinates): The vision module provides bounding boxes in [ymin, xmin, ymax, xmax] normalized to 1000.
-  To click a desktop icon or native app, calculate the center coordinate (min+max)/2 and output {"type": "click_xy", "x": 100, "y": 200}.
-- Web Browser Navigation (Text Matching): If you are currently in a browser (or opened one via open_url), 
-  DO NOT use click_xy. Instead, use click_element and pass the EXACT text of the button or link as the 'selector'. 
-  Example: {"type": "click_element", "selector": "Sign In"}
-- Return exactly ONE action per JSON response
-- Verify the previous action succeeded before moving to the next step
-- Use win_key + type_text + press_key("Enter") to open desktop apps
-- Always end with the "done" type and a spoken summary for the user
+## Decision Priority (follow this order strictly):
+
+1. WEB APPS → Always use open_url directly. NEVER use win_key or open_app for web services.
+   Common mappings:
+   - "Google Docs / Google Document" → open_url https://docs.google.com/document/create
+   - "Google Sheets"                 → open_url https://docs.google.com/spreadsheets/create
+   - "Google Slides"                 → open_url https://docs.google.com/presentation/create
+   - "Gmail"                         → open_url https://mail.google.com
+   - "YouTube"                       → open_url https://youtube.com
+   - "Google Drive"                  → open_url https://drive.google.com
+   - Any website/web app             → open_url <full URL>
+
+2. DESKTOP APPS (not browser-based) → Use win_key, then type_text the app name, then press_key Enter.
+   Examples: Notepad, Calculator, Paint, File Explorer, VS Code, Spotify.
+
+3. BROWSER CLICKS → If a browser page is open, use click_element with the EXACT visible button/link text.
+   NEVER use click_xy inside a browser. NEVER use win_key while a browser task is in progress.
+
+4. OS CLICKS → Use click_xy only for native desktop UI (outside a browser).
+   Coordinates come from vision bounding boxes [ymin, xmin, ymax, xmax] normalized to 1000.
+   Center = ((ymin+ymax)/2, (xmin+xmax)/2).
+
+## General Rules:
+- Return exactly ONE action per response.
+- Verify each step succeeded before issuing the next.
+- SENSITIVE DATA: On any login/password/form page, NEVER type credentials.
+  Use request_user_input with a clear spoken prompt, then click Submit after user confirms.
+- Always end with {"type": "done", "message": "spoken summary"}.
 """
 
 
@@ -147,16 +184,16 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
             )
             
             raw_content = response.choices[0].message.content.strip()
-            
-            # Clean up potential markdown formatting from the response
-            if raw_content.startswith("```json"):
-                raw_content = raw_content[7:]
-            if raw_content.startswith("```"):
-                raw_content = raw_content[3:]
-            if raw_content.endswith("```"):
-                raw_content = raw_content[:-3]
-                
-            raw_content = raw_content.strip()
+
+            # Robustly extract the first valid JSON object from the response,
+            # ignoring any surrounding prose or markdown fences DeepSeek may include.
+            import re
+            json_match = re.search(r'\{.*\}', raw_content, re.DOTALL)
+            if json_match:
+                raw_content = json_match.group(0)
+            else:
+                raise ValueError(f"No JSON found in DeepSeek response: {raw_content[:200]}")
+
             action = json.loads(raw_content)
             
             if update_log_callback:
@@ -170,13 +207,39 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
             if action["type"] == "speak":
                 tts.speak(action["text"])
 
+            if action["type"] == "request_user_input":
+                # Speak the prompt so the user knows what to type
+                prompt = action.get("prompt", "Please provide input, then press OK on the widget.")
+                tts.speak(prompt)
+                if update_log_callback:
+                    update_log_callback(f"⌨️ Waiting for user input: {prompt}")
+
+                # Signal the widget to switch to input-waiting mode
+                state.state.set_state("waiting_for_input")
+
+                # Block this thread until widget provides the user's voice reply
+                user_reply_event.clear()
+                user_reply_event.wait(timeout=120)  # 2-min timeout
+
+                reply = user_reply_text.strip() or "done"
+                if update_log_callback:
+                    update_log_callback(f"🎤 User replied: {reply}")
+
+                # Inject reply into conversation so agent knows user completed the step
+                decision_messages.append({"role": "assistant", "content": json.dumps(action)})
+                decision_messages.append({"role": "user", "content": f"User said: '{reply}'. Now continue."})
+                continue  # Skip execute_action, go to next iteration
+
             # 5. Execute the action
+            # IMPORTANT: only route browser-specific actions to Playwright.
+            # OS actions (win_key, type_text, click_xy, press_key) must ALWAYS go to pyautogui,
+            # even when the browser is already open.
             active_page = None
-            if action["type"] in ["open_url", "click_element"] or page_instance is not None:
-                # If they ask to navigate the web, or if browser is already open, pass the page
+            if action["type"] in ["open_url", "click_element"]:
                 active_page = get_browser_page()
-                
+
             execute_action(action, page=active_page, browser_context=browser_context)
+
             
             time.sleep(0.8)  # Let UI settle before next frame
 
@@ -196,3 +259,4 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
 
 if __name__ == "__main__":
     run_agent("Open Google Chrome")
+
