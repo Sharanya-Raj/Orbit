@@ -4,3 +4,8 @@ actions/__pycache__
 
 /venv
 .env
+.browser_profile
+/.browser_profile
+/.browser_profile/*
+.browser_profile/
+
