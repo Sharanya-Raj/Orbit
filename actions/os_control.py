@@ -3,13 +3,32 @@ import io
 import base64
 import subprocess
 import time
+import pygetwindow as gw
 
 # Disable pyautogui fail-safe (moving mouse to corner stops script)
 pyautogui.FAILSAFE = False
 
 def open_app(name: str):
-    """Opens an application through the shell."""
-    subprocess.Popen(["start", name], shell=True)
+    """Opens an application by navigating to it if already open, else uses the start menu."""
+    try:
+        windows = gw.getAllWindows()
+        for w in windows:
+            if w.title and name.lower() in w.title.lower():
+                try:
+                    w.activate()
+                    time.sleep(0.5)
+                    return
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"Error checking open windows: {e}")
+
+    # Original method of pressing windows key, typing in the name and continuing
+    press_win_key()
+    time.sleep(0.5)
+    type_text(name)
+    time.sleep(0.5)
+    press_single_key('enter')
 
 def press_shortcut(*keys):
     """Presses a combination of keys."""
@@ -23,7 +42,12 @@ def move_and_click(x: int, y: int):
     screen_width, screen_height = pyautogui.size()
     real_x = int((x / 1000) * screen_width)
     real_y = int((y / 1000) * screen_height)
-    pyautogui.click(real_x, real_y)
+    
+    # Smoothly move the cursor to the target coordinates
+    pyautogui.moveTo(real_x, real_y, duration=0.5)
+    # Give the application a brief moment to register the hover state
+    time.sleep(0.1)
+    pyautogui.click()
 
 def take_screenshot() -> str:
     """Captures the screen and returns a base64 encoded PNG string."""
