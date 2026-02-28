@@ -308,57 +308,37 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
             
             # DeepSeek sometimes hallucinates and outputs Python dicts (single quotes) instead of JSON
             try:
-                action = json.loads(raw_content)
+                action_data = json.loads(raw_content)
             except json.JSONDecodeError:
                 import ast
-                action = ast.literal_eval(raw_content) # Safely parse python dict with single quotes
+                action_data = ast.literal_eval(raw_content) # Safely parse python dict with single quotes
                 
-            print(f"\n[Agent Thought]: {action.get('thought', 'No thought provided.')}")
-            print(f"[Parsed Action]: {json.dumps(action)}")
+            # Convert single action to a list for uniform processing
+            actions = action_data if isinstance(action_data, list) else [action_data]
             
-            if update_log_callback:
-                update_log_callback(f"� Agent Thought: {action.get('thought', 'Deciding...')}")
-                update_log_callback(f"🤖 Agent Action: {action.get('type')}")
-
-            logger.log_action(action)
-
-            if action["type"] == "done":
-                # Play the completion sound
-                try:
-                    # We might need to initialize pygame mixer here if not already done,
-                    # but it's safe to call init() multiple times
-                    pygame.mixer.init()
-                    pygame.mixer.music.load("sounds/Note_block_chime_scale.ogg")
-                    pygame.mixer.music.play()
-                except Exception as e:
-                    print(f"Failed to play finish sound: {e}")
-
-                msg = action.get("message", "Done.")
-                logger.log_session_end(msg)
-                tts.speak(msg)
-                return msg
-
-            if action["type"] == "speak":
-                tts.speak(action["text"])
-
-            if action["type"] == "request_user_input":
-                # Speak the prompt so the user knows what to type
-                prompt = action.get("prompt", "Please provide input, then press OK on the widget.")
-                tts.speak(prompt)
+            for action in actions:
+                print(f"\n[Agent Thought]: {action.get('thought', 'No thought provided.')}")
+                print(f"[Parsed Action]: {json.dumps(action)}")
+                
                 if update_log_callback:
-                    update_log_callback(f"🤖 Action: {action.get('type')}")
+                    update_log_callback(f"🧠 Agent Thought: {action.get('thought', 'Deciding...')}")
+                    update_log_callback(f"🤖 Agent Action: {action.get('type')}")
+
+                logger.log_action(action)
 
                 if action["type"] == "done":
                     # Play the completion sound
                     try:
-                        import pygame
+                        # We might need to initialize pygame mixer here if not already done,
+                        # but it's safe to call init() multiple times
                         pygame.mixer.init()
                         pygame.mixer.music.load("sounds/Note_block_chime_scale.ogg")
                         pygame.mixer.music.play()
                     except Exception as e:
                         print(f"Failed to play finish sound: {e}")
-                        
+
                     msg = action.get("message", "Done.")
+                    logger.log_session_end(msg)
                     tts.speak(msg)
                     return msg
 
@@ -366,6 +346,7 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
                     tts.speak(action["text"])
 
                 if action["type"] == "request_user_input":
+                    # Speak the prompt so the user knows what to type
                     prompt = action.get("prompt", "Please provide input, then press OK on the widget.")
                     tts.speak(prompt)
                     if update_log_callback:
@@ -386,7 +367,7 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
 
                 # 5. Execute OS action
                 active_page = None
-                if action["type"] == "click_element":
+                if action["type"] == "click_element" or action.get("context") == "browser":
                     active_page = get_browser_page()
                     
                 execute_action(action, page=active_page)

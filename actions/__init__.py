@@ -7,6 +7,8 @@ def execute_action(action: dict, page=None, browser_context=None):
     The action router. Uses the 'context' field from the action to route correctly.
     Since Playwright was removed, most actions are OS-level now, except click_element.
     """
+    use_browser = action.get("context") == "browser" and page is not None
+    
     match action["type"]:
         case "click_element":
             if page: browser.click_element(page, action["selector"])
