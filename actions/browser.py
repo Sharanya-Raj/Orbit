@@ -10,7 +10,8 @@ def click_element(page, selector: str):
         lambda: page.get_by_role("textbox", name=selector, exact=False).first.click(timeout=2000),
         lambda: page.get_by_role("menuitem",name=selector, exact=False).first.click(timeout=2000),
         lambda: page.get_by_text(selector,  exact=False).first.click(timeout=2000),
-        lambda: page.click(selector, timeout=2000),
+        # Safe last resort: :text-is() handles dashes, spaces, colons without CSS parsing
+        lambda: page.locator(f':text-is("{selector}")').first.click(timeout=2000),
     ]
     last_err = None
     for strategy in strategies:

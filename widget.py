@@ -71,6 +71,12 @@ class VoiceWidget:
         # State tick loop
         self.update_ui()
         
+        # Initialize pygame mixer once for sound effects
+        try:
+            pygame.mixer.init()
+        except Exception as e:
+            print(f"[Widget] pygame init failed (sounds disabled): {e}")
+        
         self.set_ui_state("idle")
         print("Initialization complete. Widget is ready.")
 
@@ -122,10 +128,12 @@ class VoiceWidget:
         
         if current_state in ["idle", "done", "waiting_for_input"]:
             self._pre_record_state = current_state  # remember what we were doing before recording
-            # Play a short beep to indicate recording started
-            pygame.mixer.init()
-            pygame.mixer.music.load("sounds/Note_block_bell.mp3")
-            pygame.mixer.music.play()
+            # Play a short sound to indicate recording started
+            try:
+                pygame.mixer.music.load("sounds/Note_block_bell.mp3")
+                pygame.mixer.music.play()
+            except Exception:
+                pass  # Sound is optional — don't crash if file is missing
             
             # Start Recording
             state.state.set_state("recording")

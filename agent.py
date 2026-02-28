@@ -70,16 +70,17 @@ You will be provided with a text description of the current screen (from your vi
 Respond ONLY with a single JSON action object — no prose, no markdown, no fences.
 
 Available actions:
-  {"type": "open_url",      "url": "https://...", "context": "browser"}
-  {"type": "click_element", "selector": "exact-text-of-button-or-link", "context": "browser"}
-  {"type": "click_xy",      "x": 100, "y": 200, "context": "os"}
-  {"type": "type_text",     "text": "...", "context": "os"}
-  {"type": "press_key",     "key": "Enter", "context": "os"}
-  {"type": "open_app",      "app": "chrome", "context": "os"}
-  {"type": "win_key",       "context": "os"}
-  {"type": "wait",          "ms": 1500, "context": "os"}
-  {"type": "speak",         "text": "saying something to the user", "context": "os"}
-  {"type": "done",          "message": "summary of what was done", "context": "os"}
+  {"type": "open_url",            "url": "https://...", "context": "browser"}
+  {"type": "click_element",       "selector": "exact-text-of-button-or-link", "context": "browser"}
+  {"type": "click_xy",            "x": 100, "y": 200, "context": "os"}
+  {"type": "type_text",           "text": "...", "context": "os"}
+  {"type": "press_key",           "key": "Enter", "context": "os"}
+  {"type": "open_app",            "app": "chrome", "context": "os"}
+  {"type": "win_key",             "context": "os"}
+  {"type": "wait",                "ms": 1500, "context": "os"}
+  {"type": "speak",               "text": "saying something to the user", "context": "os"}
+  {"type": "request_user_input",  "prompt": "spoken instruction for the user", "context": "os"}
+  {"type": "done",                "message": "summary of what was done", "context": "os"}
 
 Rules:
 - Provide a "context" field: use "browser" ONLY if interacting with a web page via open_url or click_element. Use "os" for EVERYTHING else (Desktop apps, Discord, Settings, etc).
@@ -88,6 +89,31 @@ Rules:
 - OS Navigation (coordinates): For ANY element in a DESKTOP_APP, you MUST use {"type": "click_xy", "x": 100, "y": 200, "context": "os"}. Calculate the center coordinate (min+max)/2 using the provided bounding box. DO NOT use click_element for desktop apps.
 - Web Browser Navigation (Text Matching): If acting inside a BROWSER web page, 
   DO NOT use click_xy. Instead, use click_element and pass the EXACT text of the button or link as the 'selector', with "context": "browser".
+Rules — follow this decision tree EVERY time:
+
+STEP 1: Is the goal to visit a website or use a web service (Google Docs, Gmail, YouTube, any .com)?
+  → YES: Immediately use open_url with the correct URL. DO NOT use win_key, open_app, or search.
+         Examples: Google Docs → https://docs.google.com, Gmail → https://mail.google.com
+  → NO: Continue to Step 2.
+
+STEP 2: Is a browser already open and is the current screen a web page?
+  → YES: Use click_element with the EXACT visible text of the button or link.
+         NEVER use click_xy inside a browser page.
+  → NO: Continue to Step 3.
+
+STEP 3: This is an OS/desktop task.
+  - To open a desktop app: win_key → type_text(app name) → press_key(Enter).
+  - To click a native UI element: click_xy using bounding box center from the vision description.
+  - To type text: type_text with context "os".
+
+AUTH RULE (HIGHEST PRIORITY — overrides everything else):
+If the screen shows ANY of these: sign-in form, login page, account picker, "Create account" button,
+"Sign in", "Log in", "Email or phone", "Choose an account", "Continue with Google", "Forgot password",
+or any page where credentials are required — output request_user_input IMMEDIATELY.
+NEVER click "Create account". NEVER output done with a failure. ALWAYS hand off to the user.
+Example: {"type": "request_user_input", "prompt": "I see a sign-in page. Please sign in in the browser window, then press the hotkey and say OK when you're done.", "context": "os"}
+
+General:
 - Return exactly ONE action per JSON response.
 - Verify the previous action succeeded before moving to the next step.
 - Use the "open_app" action to open desktop apps or switch to them if they're already running. Ensure you provide the app name.
@@ -126,8 +152,11 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
         {"role": "system", "content": SYSTEM_PROMPT.strip()},
         {"role": "user",   "content": f"User Goal: {instruction}\nWhat's next?"}
     ]
+    just_resumed_from_input = False  # tracks when we need to append instead of overwrite
 
     for iteration in range(15):  # max 15 iterations safety cap
+        if update_log_callback:
+            update_log_callback(f"[Step {iteration + 1}/15]")
         # 1. Take screenshot of current OS state
         screenshot_b64 = os_control.take_screenshot()
 
@@ -151,7 +180,7 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
                         ]
                     }
                 ],
-                max_tokens=500,
+                max_tokens=800,
             )
             screen_description = vision_response.choices[0].message.content.strip()
             print(f"\n[Vision Model Screen Description]:\n{screen_description}\n")
@@ -164,7 +193,13 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
             return "Task failed at vision step due to an error."
 
         # 3. Add vision context to decision messages
-        decision_messages[-1]["content"] = f"Current Screen Description:\n{screen_description}\n\nUser Goal: {instruction}\nWhat should I do next? (Reply only with JSON)"
+        screen_update = f"Current Screen Description:\n{screen_description}\n\nUser Goal: {instruction}\nWhat should I do next? (Reply only with JSON)"
+        if just_resumed_from_input:
+            # After user input confirmation, APPEND the screen update (never overwrite the confirmation)
+            decision_messages.append({"role": "user", "content": screen_update})
+            just_resumed_from_input = False
+        else:
+            decision_messages[-1]["content"] = screen_update
 
         # 4. Get Action Decision from DeepSeek
         try:
@@ -232,9 +267,10 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
                 if update_log_callback:
                     update_log_callback(f"🎤 User replied: {reply}")
 
-                # Inject reply into conversation so agent knows user completed the step
+                # Inject reply — strongly tell DeepSeek the step is complete and to move forward
                 decision_messages.append({"role": "assistant", "content": json.dumps(action)})
-                decision_messages.append({"role": "user", "content": f"User said: '{reply}'. Now continue."})
+                decision_messages.append({"role": "user", "content": f"User confirmed (said: '{reply}'). ASSUME THIS STEP IS COMPLETE. Proceed to the NEXT action toward the goal. Do NOT use request_user_input again."})
+                just_resumed_from_input = True  # next iteration must APPEND screen, not overwrite
                 continue  # Skip execute_action, go to next iteration
 
             # 5. Execute the action

@@ -1,4 +1,5 @@
 import pyautogui
+import pyperclip
 import io
 import base64
 import subprocess
@@ -61,8 +62,17 @@ def press_win_key():
     pyautogui.press('win')
 
 def type_text(text: str):
-    """Types the specified text on the keyboard."""
-    pyautogui.typewrite(text, interval=0.01)
+    """Types the specified text using clipboard paste for full special character support.
+    Falls back to pyautogui.typewrite if clipboard is unavailable.
+    """
+    try:
+        # Use clipboard paste — handles @, !, spaces, Unicode, etc.
+        pyperclip.copy(text)
+        time.sleep(0.05)
+        pyautogui.hotkey('ctrl', 'v')
+    except Exception:
+        # Fallback: character-by-character (slower, limited char set)
+        pyautogui.typewrite(text, interval=0.04)
 
 def press_single_key(key: str):
     """Presses a single key (e.g., 'enter', 'tab', 'down')."""
