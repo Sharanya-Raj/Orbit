@@ -62,8 +62,8 @@ class VoiceWidget:
         self.msg_queue = queue.Queue()
         
         # Register global hotkey
-        print("Registering global hotkey...")
-        hotkey.listen(self.on_hotkey)
+        print("Registering global hold-to-talk hotkey...")
+        hotkey.listen(self.on_hotkey_start, self.on_hotkey_stop)
         
         # State tick loop
         self.update_ui()
@@ -109,19 +109,26 @@ class VoiceWidget:
     def collapse(self):
         """Hide transcript log to just pill"""
         self.log_frame.pack_forget()
-        self.root.geometry("300x50")
-
-    def on_hotkey(self):
+        
+    def on_hotkey_start(self):
         current_state = state.state.get_state()
         print(f"[Hotkey] Pressed. Current state is: {current_state}")
         
         if current_state == "idle" or current_state == "done":
+            # Play a short beep to indicate recording started
+            import winsound
+            winsound.Beep(1000, 200)
+            
             # Start Recording
             state.state.set_state("recording")
             self.msg_queue.put({"type": "state", "val": "recording"})
             threading.Thread(target=audio.start_recording, daemon=True).start()
-            
-        elif current_state == "recording":
+
+    def on_hotkey_stop(self):
+        current_state = state.state.get_state()
+        print(f"[Hotkey] Released. Current state is: {current_state}")
+        
+        if current_state == "recording":
             # Stop recording and process
             state.state.set_state("thinking")
             self.msg_queue.put({"type": "state", "val": "thinking"})
@@ -134,6 +141,8 @@ class VoiceWidget:
                 
                 if transcript.strip():
                     self.msg_queue.put({"type": "log", "val": f"[System] Transcript: {transcript}"})
+                    print(f"\n🎤 You said: {transcript}\n")
+                    
                     # Pass to agent
                     result = run_agent(
                         transcript, 
@@ -141,6 +150,7 @@ class VoiceWidget:
                     )
                 else:
                     self.msg_queue.put({"type": "log", "val": "[System] No speech detected."})
+                    print("\n[System] No speech detected.\n")
                     
                 state.state.set_state("done")
                 self.msg_queue.put({"type": "state", "val": "done"})

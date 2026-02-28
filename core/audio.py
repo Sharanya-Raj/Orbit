@@ -5,6 +5,8 @@ import whisper
 # Global flag for recording state
 is_recording = False
 audio_data = []
+stream = None
+actual_samplerate = 16000
 pa = None
 stream = None
 
@@ -20,11 +22,13 @@ def _callback(in_data, frame_count, time_info, status):
     return (in_data, pyaudio.paContinue)
 
 def start_recording():
-    global is_recording, audio_data, pa, stream
+    global is_recording, audio_data, pa, stream, actual_samplerate
     is_recording = True
     audio_data = []
-    
+
+    actual_samplerate = 16000
     pa = pyaudio.PyAudio()
+    
     stream = pa.open(format=pyaudio.paFloat32,
                      channels=1,
                      rate=16000,
@@ -48,7 +52,9 @@ def stop_recording() -> np.ndarray:
     
     # Wait for the stream to fully process the last chunk
     if len(audio_data) > 0:
-        return np.concatenate(audio_data, axis=0).flatten()
+        audio = np.concatenate(audio_data, axis=0).flatten()
+        return audio
+        
     return np.array([])
 
 def transcribe(audio_array: np.ndarray, model=None) -> str:
