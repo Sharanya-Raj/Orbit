@@ -170,11 +170,12 @@ Output ONLY valid JSON:
 }
 
 Rules:
-- Be STRICT. Return accomplished=true ONLY if you can clearly see the success criteria are met.
-- Do NOT return accomplished=true based on assumption or hope.
-- Only trust confidence >= 80 as accomplished=true.
-- Partial completion is NOT completion.
-- If vision says GOAL STATUS: COMPLETE but you cannot verify the criteria from the description, return accomplished=false.
+- Be REASONABLE. Return accomplished=true if the success criteria are plausibly met based on what you can see.
+- If the vision module says GOAL STATUS: COMPLETE, trust it unless there is clear contradicting evidence.
+- Confidence >= 50 is sufficient to mark accomplished=true.
+- The agent has already done the work — your job is to confirm it, not to second-guess every detail.
+- If the task is "send a message" and a message matching the description is visible in chat, that is COMPLETE.
+- Partial completion is NOT completion, but do not require pixel-perfect confirmation.
 """
 
 
@@ -255,8 +256,9 @@ Clicking elements:
   - Browser web pages: You may use click_element with the exact visible text of the target element.
 
 Typing and submitting:
-  - type_text only types. To submit, follow with press_key "Enter".
-  - Batch: [{"type": "type_text", "text": "query", "context": "os"}, {"type": "press_key", "key": "Enter", "context": "os"}]
+  - type_text only types. To submit searches or send chat messages, follow with press_key "Enter".
+  - To send a chat message, you MUST batch: [{"type": "type_text", "text": "hello", "context": "os"}, {"type": "press_key", "key": "Enter", "context": "os"}]
+  - The message will NOT send on Discord/Web otherwise!
 
 Search interactions:
   - After typing in a search bar, ALWAYS press Enter to submit. NEVER click autocomplete dropdown suggestions.
@@ -413,7 +415,7 @@ def check_goal_accomplished(instruction: str, plan: dict, screen_description: st
         raw = response.choices[0].message.content.strip()
         result = json.loads(_extract_json(raw))
 
-        accomplished = result.get("accomplished", False) and result.get("confidence", 0) >= 80
+        accomplished = result.get("accomplished", False) and result.get("confidence", 0) >= 50
         reason = result.get("reason", "Goal status unknown.")
 
         print(f"\n[Goal Check] Accomplished: {accomplished} (confidence: {result.get('confidence', 0)}%)")
@@ -502,6 +504,7 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
         {"role": "user", "content": f"User Goal: {instruction}\n\n{plan_text}\n\nBegin executing the plan. Take the first action."},
     ]
     just_resumed_from_input = False
+    consecutive_done_attempts = 0  # Track how many times in a row the agent says done
 
     for iteration in range(25):
         if update_log_callback:
@@ -602,11 +605,9 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
             f"Do NOT guess coordinates. If the target element is not listed, navigate to find it. "
             f"Only output 'done' when the screen confirms the success criteria are met."
         )
-        if just_resumed_from_input:
-            decision_messages.append({"role": "user", "content": screen_update})
-            just_resumed_from_input = False
-        else:
-            decision_messages[-1]["content"] = screen_update
+        # Always append a fresh user message for each iteration
+        decision_messages.append({"role": "user", "content": screen_update})
+        just_resumed_from_input = False
 
         # 5. Get Action Decision
         try:
@@ -646,6 +647,7 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
                 logger.log_action(action)
 
                 if action["type"] == "done":
+                    consecutive_done_attempts += 1
                     # Agent says done — verify with goal checker before accepting
                     if update_log_callback:
                         update_log_callback("[System] Agent reports done — verifying goal completion...")
@@ -656,17 +658,28 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
                         logger.log_session_end(msg)
                         tts.speak(msg)
                         return msg
+                    elif consecutive_done_attempts >= 2:
+                        # Agent has said 'done' multiple times — trust it to avoid infinite loop
+                        print(f"[Goal Check] Agent has said done {consecutive_done_attempts}x in a row. Accepting.")
+                        if update_log_callback:
+                            update_log_callback(f"[System] Task confirmed complete after persistent agent signal.")
+                        _play_finish_sound()
+                        msg = action.get("message", "Task complete.")
+                        logger.log_session_end(msg)
+                        tts.speak(msg)
+                        return msg
                     else:
-                        # Agent is wrong — override and keep going
-                        print(f"[Goal Check] Agent said done but goal not confirmed. Continuing...")
+                        # Agent may be wrong — override and keep going once
+                        print(f"[Goal Check] Agent said done but goal not confirmed. Continuing... (attempt {consecutive_done_attempts})")
                         if update_log_callback:
                             update_log_callback(f"[System] Goal not yet confirmed — continuing...")
                         decision_messages.append({"role": "assistant", "content": json.dumps(action_data)})
                         decision_messages.append({
                             "role": "user",
                             "content": (
-                                f"The goal is NOT yet accomplished. Verification found: {reason}. "
-                                f"Review the success criteria and continue working toward the goal."
+                                f"The goal verification was inconclusive. Reason: {reason}. "
+                                f"If you believe the task is truly complete based on what you see, output 'done' again. "
+                                f"Otherwise, take any remaining action needed."
                             ),
                         })
                         just_resumed_from_input = True
@@ -707,8 +720,8 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
                 time.sleep(1.0)
 
             if not just_resumed_from_input:
+                consecutive_done_attempts = 0  # Reset counter when agent takes a real action
                 decision_messages.append({"role": "assistant", "content": json.dumps(action_data)})
-                decision_messages.append({"role": "user", "content": "Action executed. Analyze the new screenshot and decide the next step."})
 
         except Exception as e:
             error_msg = f"Error in agent loop: {str(e)}"

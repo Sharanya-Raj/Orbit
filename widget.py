@@ -29,7 +29,7 @@ class WINDOWCOMPOSITIONATTRIBDATA(Structure):
 
 # ── Windows Visual Effects ──────────────────────────────────────────────────
 
-def apply_acrylic_blur(hwnd, tint_abgr=0x35141416):
+def apply_acrylic_blur(hwnd, tint_abgr=0x55141416):
     policy = ACCENTPOLICY()
     policy.AccentState = 4
     policy.GradientColor = tint_abgr
@@ -58,10 +58,16 @@ def apply_mica_if_available(hwnd):
 
 # ── Canvas Helpers ──────────────────────────────────────────────────────────
 
-T_COLOR = "#000001" # Transparent keyed color
+T_COLOR = "#000001"  # Transparent keyed color
+
+# Design tokens
+BG_COLOR     = "#18181b"   # zinc-900 — main pill background
+BG_BORDER    = "#3f3f46"   # zinc-700 — subtle border
+ACCENT_GLOW  = "#6d28d9"   # violet-700 — used for border in active states
+FONT_FAMILY  = "Segoe UI Variable Display Semibold"
 
 
-def create_round_rect(canvas, x1, y1, x2, y2, radius=25, **kw):
+def create_round_rect(canvas, x1, y1, x2, y2, radius=22, **kw):
     r = radius
     pts = [
         x1 + r, y1,   x2 - r, y1,
@@ -78,29 +84,34 @@ def create_round_rect(canvas, x1, y1, x2, y2, radius=25, **kw):
 
 STATE_STYLES = {
     "idle": {
-        "dot": "#10b981", # Emerald
-        "text": "#9ca3af", # Gray-400
+        "dot": "#10b981",        # Emerald
+        "text": "#a1a1aa",       # zinc-400
+        "border": BG_BORDER,
         "label": "Orbit  ·  Hold to speak",
     },
     "recording": {
-        "dot": "#ef4444", # Red
-        "text": "#fecaca", # Red-200
+        "dot": "#ef4444",        # Red
+        "text": "#fca5a5",       # red-300
+        "border": "#ef4444",
         "label": "Listening…",
     },
     "thinking": {
-        "dot": "#8b5cf6", # Violet
-        "text": "#e9d5ff", # Purple-200
+        "dot": "#8b5cf6",        # Violet
+        "text": "#c4b5fd",       # purple-300
+        "border": ACCENT_GLOW,
         "label": "Thinking…",
     },
     "waiting_for_input": {
-        "dot": "#3b82f6", # Blue
-        "text": "#bfdbfe", # Blue-200
-        "label": "What should I say?",
+        "dot": "#3b82f6",        # Blue
+        "text": "#93c5fd",       # blue-300
+        "border": "#3b82f6",
+        "label": "Listening for reply…",
     },
     "done": {
         "dot": "#10b981",
-        "text": "#9ca3af",
-        "label": "Done",
+        "text": "#6ee7b7",       # emerald-300
+        "border": "#10b981",
+        "label": "Done  ✓",
     },
 }
 
@@ -108,9 +119,10 @@ STATE_STYLES = {
 # ── Main Widget ─────────────────────────────────────────────────────────────
 
 class VoiceWidget:
-    W, H = 340, 56
-    DOT_R = 5
-    DOT_X = 24
+    W, H   = 340, 52
+    PAD    = 6          # gap between pill edge and content
+    DOT_R  = 5
+    DOT_X  = 26         # horizontal center of status dot
 
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -141,12 +153,12 @@ class VoiceWidget:
 
         sx = self.root.winfo_screenwidth()
         x = (sx - self.W) // 2
-        self.root.geometry(f"{self.W}x{self.H}+{x}+14")
+        self.root.geometry(f"{self.W}x{self.H}+{x}+16")
         self.root.update_idletasks()
 
         hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
         apply_mica_if_available(hwnd)
-        apply_acrylic_blur(hwnd, tint_abgr=0x35141416)
+        apply_acrylic_blur(hwnd, tint_abgr=0x55141416)
         apply_rounded_corners(hwnd)
 
     def _build_canvas(self):
@@ -156,21 +168,28 @@ class VoiceWidget:
         )
         self.canvas.pack(fill=tk.BOTH, expand=True)
 
+        p = self.PAD
+        # Outer pill background
+        self.pill_bg = create_round_rect(
+            self.canvas, p, p, self.W - p, self.H - p,
+            radius=22, fill=BG_COLOR, outline=BG_BORDER, width=1,
+        )
+
         cy = self.H // 2
 
-        # Status dot — slightly larger and centered
+        # Status dot
         dr = self.DOT_R
         self.dot = self.canvas.create_oval(
             self.DOT_X - dr, cy - dr, self.DOT_X + dr, cy + dr,
             fill="#10b981", outline="",
         )
 
-        # Label text — crisp modern font
+        # Label text
         self.label = self.canvas.create_text(
-            self.DOT_X + 18, cy,
+            self.DOT_X + 16, cy,
             text="Orbit  ·  Hold to speak",
-            fill="#9ca3af",
-            font=("Segoe UI Variable Display Semibold", 10),
+            fill="#a1a1aa",
+            font=(FONT_FAMILY, 10),
             anchor="w",
         )
 
@@ -192,7 +211,7 @@ class VoiceWidget:
 
     # ── UI State ────────────────────────────────────────────────────────────
 
-    def _truncate(self, text, mx=38):
+    def _truncate(self, text, mx=40):
         return text if len(text) <= mx else text[: mx - 1] + "…"
 
     def set_label(self, text, color=None):
@@ -204,7 +223,13 @@ class VoiceWidget:
         state.state.set_state(new_state)
         s = STATE_STYLES.get(new_state, STATE_STYLES["idle"])
 
+        # Update dot color
         self.canvas.itemconfig(self.dot, fill=s["dot"])
+
+        # Update pill border to match state
+        self.canvas.itemconfig(self.pill_bg, outline=s["border"])
+
+        # Update label
         self.set_label(s["label"], s["text"])
 
         if new_state == "done":
@@ -240,9 +265,7 @@ class VoiceWidget:
             def process():
                 audio_data = audio.stop_recording()
                 transcript = audio.transcribe(audio_data)
-                
-                #hardcoded example
-                # transcript = "Open Spotify and play the song 'Shape of You' by Ed Sheeran"
+
                 if transcript.strip():
                     self.msg_queue.put({"type": "text", "val": transcript})
                     print(f"\n[You] {transcript}\n")
