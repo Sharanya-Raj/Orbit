@@ -29,7 +29,7 @@ class WINDOWCOMPOSITIONATTRIBDATA(Structure):
 
 # ── Windows Visual Effects ──────────────────────────────────────────────────
 
-def apply_acrylic_blur(hwnd, tint_abgr=0x18101018):
+def apply_acrylic_blur(hwnd, tint_abgr=0x35141416):
     policy = ACCENTPOLICY()
     policy.AccentState = 4
     policy.GradientColor = tint_abgr
@@ -58,7 +58,7 @@ def apply_mica_if_available(hwnd):
 
 # ── Canvas Helpers ──────────────────────────────────────────────────────────
 
-T_COLOR = "#000001"
+T_COLOR = "#000001" # Transparent keyed color
 
 
 def create_round_rect(canvas, x1, y1, x2, y2, radius=25, **kw):
@@ -78,34 +78,29 @@ def create_round_rect(canvas, x1, y1, x2, y2, radius=25, **kw):
 
 STATE_STYLES = {
     "idle": {
-        "dot": "#4ade80",
-        "text": "#9090a8",
+        "dot": "#10b981", # Emerald
+        "text": "#9ca3af", # Gray-400
         "label": "Orbit  ·  Hold to speak",
-        "border": "#3a3a50",
     },
     "recording": {
-        "dot": "#f87171",
-        "text": "#f0d0d0",
+        "dot": "#ef4444", # Red
+        "text": "#fecaca", # Red-200
         "label": "Listening…",
-        "border": "#5a3040",
     },
     "thinking": {
-        "dot": "#a78bfa",
-        "text": "#c8b8f0",
+        "dot": "#8b5cf6", # Violet
+        "text": "#e9d5ff", # Purple-200
         "label": "Thinking…",
-        "border": "#403058",
     },
     "waiting_for_input": {
-        "dot": "#60a5fa",
-        "text": "#b0c8f0",
+        "dot": "#3b82f6", # Blue
+        "text": "#bfdbfe", # Blue-200
         "label": "What should I say?",
-        "border": "#304058",
     },
     "done": {
-        "dot": "#4ade80",
-        "text": "#9090a8",
+        "dot": "#10b981",
+        "text": "#9ca3af",
         "label": "Done",
-        "border": "#3a3a50",
     },
 }
 
@@ -113,9 +108,9 @@ STATE_STYLES = {
 # ── Main Widget ─────────────────────────────────────────────────────────────
 
 class VoiceWidget:
-    W, H = 340, 48
-    DOT_R = 4
-    DOT_X = 20
+    W, H = 340, 56
+    DOT_R = 5
+    DOT_X = 24
 
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -151,7 +146,7 @@ class VoiceWidget:
 
         hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
         apply_mica_if_available(hwnd)
-        apply_acrylic_blur(hwnd, tint_abgr=0x18101018)
+        apply_acrylic_blur(hwnd, tint_abgr=0x35141416)
         apply_rounded_corners(hwnd)
 
     def _build_canvas(self):
@@ -161,28 +156,21 @@ class VoiceWidget:
         )
         self.canvas.pack(fill=tk.BOTH, expand=True)
 
-        p = 2
         cy = self.H // 2
 
-        # Clean border pill — transparent fill, subtle outline
-        self.border_pill = create_round_rect(
-            self.canvas, p, p, self.W - p, self.H - p,
-            radius=20, fill=T_COLOR, outline="#3a3a50", width=1,
-        )
-
-        # Status dot — clean, no outline
+        # Status dot — slightly larger and centered
         dr = self.DOT_R
         self.dot = self.canvas.create_oval(
             self.DOT_X - dr, cy - dr, self.DOT_X + dr, cy + dr,
-            fill="#4ade80", outline="",
+            fill="#10b981", outline="",
         )
 
-        # Label text
+        # Label text — crisp modern font
         self.label = self.canvas.create_text(
-            self.DOT_X + 14, cy,
+            self.DOT_X + 18, cy,
             text="Orbit  ·  Hold to speak",
-            fill="#9090a8",
-            font=("Segoe UI", 10),
+            fill="#9ca3af",
+            font=("Segoe UI Variable Display Semibold", 10),
             anchor="w",
         )
 
@@ -217,7 +205,6 @@ class VoiceWidget:
         s = STATE_STYLES.get(new_state, STATE_STYLES["idle"])
 
         self.canvas.itemconfig(self.dot, fill=s["dot"])
-        self.canvas.itemconfig(self.border_pill, outline=s["border"])
         self.set_label(s["label"], s["text"])
 
         if new_state == "done":

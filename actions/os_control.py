@@ -63,9 +63,9 @@ def open_app(name: str):
         print("[OS] Launching Chrome with remote debugging ports...")
         press_shortcut('win', 'r')
         time.sleep(0.3)
-        type_text('chrome --remote-debugging-port=9222')
+        type_text('chrome.exe --remote-debugging-port=9222')
         press_single_key('enter')
-        time.sleep(1.0)
+        time.sleep(1.5)
         maximize_window()
         return
 
