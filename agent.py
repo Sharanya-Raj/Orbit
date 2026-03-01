@@ -562,10 +562,27 @@ def check_goal_accomplished(instruction: str, plan: dict, screen_description: st
 def _play_finish_sound():
     try:
         pygame.mixer.init()
+        pygame.mixer.music.stop()
+        time.sleep(0.3)
         pygame.mixer.music.load("sounds/Note_block_chime_scale.ogg")
         pygame.mixer.music.play()
     except Exception as e:
         print(f"Failed to play finish sound: {e}")
+
+def _play_bkgd_music():
+    try:
+        pygame.mixer.init()
+        pygame.mixer.music.load("sounds/bkgd.mp3")
+        pygame.mixer.music.play(-1)
+    except Exception as e:
+        print(f"Failed to play background music: {e}")
+
+def _stop_bkgd_music():
+    try:
+        if pygame.mixer.get_init():
+            pygame.mixer.music.stop()
+    except Exception as e:
+        pass
 
 
 def translate_to_english(text: str) -> tuple:
@@ -610,6 +627,7 @@ def translate_from_english(text: str, target_language: str) -> str:
 def run_agent(instruction: str, update_log_callback=None) -> str:
     """Runs the main perception-action loop to execute the user instruction."""
     logger.log_session_start(instruction)
+    _play_bkgd_music()
 
     # --- MULTI-LINGUAL SUPPORT: Translate to English for reasoning ---
     english_instruction, user_language = translate_to_english(instruction)
@@ -742,6 +760,7 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
                 update_log_callback(error_msg)
             print(error_msg)
             logger.log_session_end("Task failed at vision step due to an error.")
+            _stop_bkgd_music()
             return "Task failed at vision step due to an error."
 
         # 3. Check goal completion when vision signals COMPLETE
@@ -935,6 +954,7 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
                         logger.log_error(f"Hard action limit of {MAX_TOTAL_ACTIONS} reached.")
                         if update_log_callback:
                             update_log_callback(f"[System] Maximum action limit reached ({MAX_TOTAL_ACTIONS}).")
+                        _stop_bkgd_music()
                         tts.speak("I've reached the maximum number of actions. Stopping here.")
                         logger.log_session_end("Maximum action limit reached.")
                         return "Maximum action limit reached."
@@ -1016,9 +1036,11 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
                     update_log_callback(error_msg)
                 print(error_msg)
                 logger.log_session_end("Task failed due to an error.")
+                _stop_bkgd_music()
                 return "Task failed due to an error."
 
     logger.log_session_end("Maximum steps reached.")
+    _stop_bkgd_music()
     return "Maximum steps reached."
 
 
@@ -1029,14 +1051,14 @@ def display_welcome_banner():
 
     # Top header box
     header = Text(
-        "✻ Welcome to the ORBIT research preview!",
-        style="bold orange1"
+        "✻ Welcome to the ORBIT !",
+        style="bright_green"
     )
 
     console.print(
         Panel(
             header,
-            border_style="orange1",
+            border_style="bright_green",
             box=box.ROUNDED,
             padding=(0, 2),
         )
@@ -1050,7 +1072,7 @@ def display_welcome_banner():
 
     console.print(
         Align.center(
-            f"[bold orange1]{ascii_text}[/bold orange1]"
+            f"[bold white]{ascii_text}[/bold white]"
         )
     )
 

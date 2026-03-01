@@ -506,6 +506,8 @@ if __name__ == "__main__":
     font = QFont("Segoe UI Variable Display", 11)
     app.setFont(font)
     
+    agent_module.display_welcome_banner()
+    
     print("Starting Orbit…")
     print("=" * 54)
     print("Orbit started. Hold Ctrl+Shift+Space to speak.")

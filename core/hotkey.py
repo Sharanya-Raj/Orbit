@@ -58,7 +58,21 @@ def listen(on_start: callable, on_stop: callable):
     def start_listener():
         with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
             listener.join()
+
+    def killswitch_on_press(key):
+        if hasattr(key, 'char') and key.char == '\\':
+            import os
+            import signal
+            print("\n[System] Global killswitch activated ('\\'). Exiting immediately.")
+            os.kill(os.getpid(), signal.SIGTERM)
+
+    def start_killswitch():
+        with keyboard.Listener(on_press=killswitch_on_press) as listener:
+            listener.join()
             
-    # Run in a background thread
-    t = threading.Thread(target=start_listener, daemon=True)
-    t.start()
+    # Run hotkeys in background threads
+    t1 = threading.Thread(target=start_listener, daemon=True)
+    t1.start()
+    
+    t2 = threading.Thread(target=start_killswitch, daemon=True)
+    t2.start()
