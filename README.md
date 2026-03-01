@@ -78,7 +78,7 @@ Orbit is a multi-threaded Python application built around a **dual-model agentic
 │   │              Agentic Perception-Action Loop                   │   │
 │   │                                                               │   │
 │   │  Screenshot ──► Vision Model ──► Screen Description          │   │
-│   │       ▲              (Gemini 1.5 Flash via OpenRouter)        │   │
+│   │       ▲              (Gemini 3 Flash Preview via OpenRouter)        │   │
 │   │       │                       │                               │   │
 │   │       │              Decision Model                           │   │
 │   │       │           (DeepSeek-V3 via Featherless AI)            │   │
