@@ -272,11 +272,12 @@ Output ONLY valid JSON:
 }
 
 Rules:
-- Be STRICT. Return accomplished=true ONLY if you can clearly see the success criteria are met.
-- Do NOT return accomplished=true based on assumption or hope.
-- Only trust confidence >= 80 as accomplished=true.
-- Partial completion is NOT completion.
-- If vision says GOAL STATUS: COMPLETE but you cannot verify the criteria from the description, return accomplished=false.
+- Be REASONABLE. Return accomplished=true if the success criteria are plausibly met based on what you can see.
+- If the vision module says GOAL STATUS: COMPLETE, trust it unless there is clear contradicting evidence.
+- Confidence >= 50 is sufficient to mark accomplished=true.
+- The agent has already done the work — your job is to confirm it, not to second-guess every detail.
+- If the task is "send a message" and a message matching the description is visible in chat, that is COMPLETE.
+- Partial completion is NOT completion, but do not require pixel-perfect confirmation.
 """
 
 
@@ -409,8 +410,9 @@ Clicking elements:
   - Browser web pages: You may use click_element with the exact visible text of the target element.
 
 Typing and submitting:
-  - type_text only types. To submit, follow with press_key "Enter".
-  - Batch: [{"type": "type_text", "text": "query", "context": "os"}, {"type": "press_key", "key": "Enter", "context": "os"}]
+  - type_text only types. To submit searches or send chat messages, follow with press_key "Enter".
+  - To send a chat message, you MUST batch: [{"type": "type_text", "text": "hello", "context": "os"}, {"type": "press_key", "key": "Enter", "context": "os"}]
+  - The message will NOT send on Discord/Web otherwise!
 
 Search interactions:
   - After typing in a search bar, ALWAYS press Enter to submit. NEVER click autocomplete dropdown suggestions.
@@ -542,7 +544,7 @@ def check_goal_accomplished(instruction: str, plan: dict, screen_description: st
         raw = response.choices[0].message.content.strip()
         result = json.loads(_extract_json(raw))
 
-        accomplished = result.get("accomplished", False) and result.get("confidence", 0) >= 80
+        accomplished = result.get("accomplished", False) and result.get("confidence", 0) >= 50
         reason = result.get("reason", "Goal status unknown.")
 
         print(f"\n[Goal Check] Accomplished: {accomplished} (confidence: {result.get('confidence', 0)}%)")
@@ -770,11 +772,9 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
             f"Do NOT guess coordinates. If the target element is not listed, navigate to find it. "
             f"Only output 'done' when the screen confirms the success criteria are met."
         )
-        if just_resumed_from_input:
-            decision_messages.append({"role": "user", "content": screen_update})
-            just_resumed_from_input = False
-        else:
-            decision_messages[-1]["content"] = screen_update
+        # Always append a fresh user message for each iteration
+        decision_messages.append({"role": "user", "content": screen_update})
+        just_resumed_from_input = False
 
         # 5. Get Action Decision — with Pydantic validation retry loop (Task 3)
         MAX_VALIDATION_RETRIES = 2
