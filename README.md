@@ -1,7 +1,7 @@
 # Orbit — Voice-First AI Agent for Accessible Computer Control
 
 > **Hackathon Tracks:**
-> 🏆 **Accessibility Track** | 🏆 **Overall Hack** | 🗣️ **Best Use of ElevenLabs** | 🚀 **Best Use of Featherless AI**
+> 🏆 **Accessibility Track** | 🏆 **Overall Hack** | 🗣️ **Best Use of ElevenLabs** | 🚀 **Best Use of Featherless AI** | 🔍 **Best Use of Gemini**
 >
 > Empowering the visually impaired, elderly, and motor-impaired to operate any Windows computer entirely by voice — no typing, no clicking, no mouse.
 
@@ -51,6 +51,13 @@ For visually impaired or elderly users, the "voice" of the assistant is the enti
 - **Warm & Natural:** Replaced generic, robotic OS TTS with ultra-lifelike speech that feels empathetic and natural.
 - **Multilingual Support:** Orbit automatically detects the language the user speaks (e.g., Spanish). It uses DeepSeek to translate the objective to English for internal OS reasoning, takes actions, and then uses ElevenLabs to synthesize the final response *back into the user's native tongue*.
 - **Blocking & Async Playback:** Seamlessly integrated with `pygame` to lock audio playback only when necessary, preventing overlapping system sounds.
+
+### 🔍 Best Use of Gemini
+Orbit's accessibility mission depends entirely on *seeing* the screen — and that vision layer is powered by **Google Gemini** (`gemini-2.0-flash-preview` via OpenRouter).
+- **Pixel-Level Screen Perception:** On every iteration of the agentic loop, Orbit captures a full-resolution screenshot and sends it to Gemini. Gemini parses the raw pixels and returns a structured natural-language description of every visible UI element — buttons, text fields, menus, dialogs — along with normalized `[ymin, xmin, ymax, xmax]` bounding boxes on a `[0, 1000]` coordinate scale. This means Orbit never relies on fragile accessibility trees or DOM inspection; it sees the screen the same way a human does.
+- **Context-Aware Classification:** Gemini identifies whether the active window is a **BROWSER** or a **DESKTOP_APP**, allowing the downstream decision model to route actions correctly — Playwright for web content, PyAutoGUI for native OS elements.
+- **Goal-Completion Signalling:** Gemini evaluates whether the current screen satisfies the user's objective and emits a `GOAL STATUS: COMPLETE` signal, enabling the agent to terminate confidently rather than running to the step limit.
+- **Enabling True Accessibility:** Because Gemini can describe any screen — legacy software, custom desktop apps, dynamic web UIs — Orbit works everywhere, not just on applications with built-in accessibility support.
 
 ### 🚀 Best Use of Featherless AI
 Orbit's core is a hyper-reactive loop that perceives the screen, reasons, and acts every 1-2 seconds. **Latency is life or death.**
