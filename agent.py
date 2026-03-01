@@ -29,26 +29,36 @@ except ImportError:
 # Global Playwright state
 browser_instance = None
 browser_context = None
-page_instance = None
 
 def get_browser_page():
-    """Lazily attaches to the running Chrome/Edge instance over CDP to extract DOM."""
+    """Aggressively attaches to the running Chrome instance over CDP to extract DOM, clearing dead caches."""
     global browser_instance, browser_context
+    
+    # 1. Test existing connection or reset it
     try:
-        if browser_instance is None or not browser_instance.is_connected():
+        if browser_instance is not None:
+            if not browser_instance.is_connected() or len(browser_instance.contexts) == 0:
+                raise Exception("Connection is dead")
+    except Exception:
+        browser_instance = None
+        browser_context = None
+
+    # 2. Attach if no valid connection exists
+    if browser_instance is None:
+        try:
             p = sync_playwright().start()
             browser_instance = p.chromium.connect_over_cdp("http://localhost:9222")
-            
-        # Always fetch the most recent active page, as users might close/open tabs
+        except Exception as e:
+            return None # Expected if Chrome isn't open with debugging ports
+
+    # 3. Always fetch the most recent active page
+    try:
         contexts = browser_instance.contexts
         if not contexts: return None
         pages = contexts[0].pages
         if not pages: return None
-        
-        # Return the last active page
-        return pages[-1]
-    except Exception as e:
-        # Expected if browser isn't open yet or wasn't launched with debugging port
+        return pages[-1] # Return the last active page
+    except Exception:
         browser_instance = None
         return None
 
@@ -78,7 +88,7 @@ You will be provided with a text description of the current screen (from your vi
 Respond ONLY with a single JSON action object — no prose, no markdown, no fences.
 
 Available actions (must include a "thought" explaining your plan):
-  {"thought": "I need to click the search bar...", "type": "click_xy", "x": 100, "y": 200, "context": "os"}
+  {"thought": "I need to click the search bar...", "type": "click_box", "bbox": [100, 200, 150, 250], "context": "os"}
   {"thought": "Typing the URL into the bar...", "type": "type_text", "text": "...", "context": "os"}
   {"thought": "Pressing Enter to search...", "type": "press_key", "key": "Enter", "context": "os"}
   {"thought": "Opening Run dialog...", "type": "press_shortcut", "keys": ["win", "r"], "context": "os"}
@@ -89,7 +99,7 @@ Available actions (must include a "thought" explaining your plan):
 
 Rules:
 - Provide a "context" field: use "browser" ONLY if interacting with a web page via open_url or click_element. Use "os" for EVERYTHING else (Desktop apps, Discord, Settings, etc).
-  * CRITICAL CONTEXT CHECK: If the vision description classifies the active application as a "DESKTOP_APP" (like Spotify, Discord, VS Code), YOU MUST use "os" context and OS actions.
+  * CRITICAL CONTEXT CHECK: If the vision description classifies the active application as a "DESKTOP_APP", YOU MUST use "os" context and OS actions.
   * ONLY use "browser" and browser actions if the active application is explicitly classified as a "BROWSER" (has a URL bar) AND you are on a webpage.
 - OS Navigation (coordinates): For ANY element in a DESKTOP_APP, you MUST use {"type": "click_box", "bbox": [ymin, xmin, ymax, xmax], "context": "os"}. Copy the EXACT bounding box array provided by the vision module. DO NOT calculate coordinates yourself. DO NOT use click_element for desktop apps.
 - Web Browser Navigation (Text Matching): If acting inside a BROWSER web page, 
@@ -97,59 +107,56 @@ Rules:
 Rules — follow this decision tree EVERY time:
 
 1. BROWSING THE WEB:
-   - To open the browser, you MUST use the Windows Run dialog to enable debugging ports. DO NOT use the Start Menu search for Chrome.
-   - First, `press_shortcut` with keys `["win", "r"]`.
-   - Wait 1000ms, then `type_text` exactly: `chrome --remote-debugging-port=9222` and press Enter. This is CRITICAL so we can attach to the DOM.
-   - Wait for it to open, then click the address bar and do your search.
+   - To open the browser (if not already open), you MUST use the `{"type": "open_app", "app": "chrome", "context": "os"}` action. This will automatically launch Chrome with debugging ports enabled and maximize the window for you.
+   - To navigate to a website: ALWAYS focus the address bar first by using `{"type": "press_shortcut", "keys": ["ctrl", "l"], "context": "os"}`.
+   - After focusing the address bar, use `type_text` to type the URL (e.g., "example.com"). NOTE: `type_text` DOES NOT press Enter automatically! You MUST follow it up with a separate `press_key` action for "enter" to submit, or use a batch array: `[{"type": "type_text", "text": "example.com", "context": "os"}, {"type": "press_key", "key": "enter", "context": "os"}]`. You must navigate to the main site and click through the GUI.
    - NEVER guess coordinates. EVERY action requires the Vision module to give you the exact coordinate bounding box.
 
 2. OS & DESKTOP TASKS:
-   - To click ANY native element, web button, or UI element: use `click_xy`.
+   - To click ANY native element, web button, or UI element: use `click_box`.
    - The Vision model provides bounding boxes in the format `[ymin, xmin, ymax, xmax]`.
-   - You MUST calculate the exact center coordinates using this formula:
-     `x = (xmin + xmax) / 2`
-     `y = (ymin + ymax) / 2`
-   - CRITICAL: Calculate the final integer values yourself BEFORE generating the JSON. Do NOT put mathematical expressions in the JSON. `x` and `y` must be numbers.
-   - Windows Search results: ALWAYS use `click_xy` to click them based on the vision module.
-   - To maximize a window, use: `{"thought": "Maximizing...", "type": "press_shortcut", "keys": ["win", "up"], "context": "os"}`
+   - Just directly copy the exact array into the "bbox" field.
+   - Windows Search results: ALWAYS use `click_box` to click them based on the vision module.
+   - To maximize a window, use: `{"thought": "Maximizing...", "type": "maximize_window", "context": "os"}`
    
 3. BROWSER DOM NAVIGATION (If inside a browser):
-   - You MUST maximize the browser as soon as you open it.
-   - You can use Playwright's `click_element` Action to click exact text on a webpage instead of `click_xy` coordinates if you want to ensure accuracy.
+   - You can use Playwright's `click_element` Action to click exact text on a webpage instead of `click_box` coordinates if you want to ensure accuracy.
    - {"thought": "Clicking the Sign In button...", "type": "click_element", "selector": "Sign In", "context": "browser"}
    
 4. BATCHING ACTIONS:
    - You can output a single action JSON object OR an array of action objects `[{}, {}]` to execute multiple steps quickly without waiting for a new screenshot (e.g., win_key -> type_text "chrome" -> press_key "Enter").
 
 STEP 3: This is an OS/desktop task.
-  - To open OR switch to a desktop app (Spotify, Discord, Notepad, etc.):
-      * ALWAYS use {"type": "open_app", "app": "<name>", "context": "os"}.
+  - To open OR switch to a desktop app:
+      * ALWAYS use {"type": "open_app", "app": "<app_name>", "context": "os"}.
       * This works whether the app is already running or not — it will bring it to focus or launch it.
       * NEVER click a taskbar icon. NEVER click a desktop shortcut. NEVER use win_key manually for this.
   - To click a native UI element inside an already-open app: use the "click_box" action with the exact bounding box array from the vision description.
   - SPECIFICITY RULE: If the user requests a specific item (e.g., a specific song, file, or contact), you MUST click the specific row or text for that item. DO NOT click a generic "Play" button for the whole album/playlist/page unless it is the only option.
   - To type text: type_text with context "os".
 
-AUTH RULE (HIGHEST PRIORITY — overrides everything else):
-If the screen shows ANY of these: sign-in form, login page, account picker, "Create account" button,
-"Sign in", "Log in", "Email or phone", "Choose an account", "Continue with Google", "Forgot password",
-or any page where credentials are required — output request_user_input IMMEDIATELY.
-NEVER click "Create account". NEVER output done with a failure. ALWAYS hand off to the user.
-Example: {"type": "request_user_input", "prompt": "I see a sign-in page. Please sign in in the browser window, then press the hotkey and say OK when you're done.", "context": "os"}
+AUTH RULE:
+If the screen is EXPLICITLY a login page actively requesting credentials (e.g., you see input text boxes specifically labeled for "Email", "Username", or "Password"), you must immediately output `request_user_input`.
+DO NOT trigger this rule just because there is a "Login" or "Sign In" button tucked in the corner of a generic homepage. ONLY trigger it if the main content of the screen is an active form waiting for the user's password.
+NEVER click "Create account" unless explicitly requested by the user. NEVER output done with a failure just because of a login wall. ALWAYS hand off to the user.
+Example: {"type": "request_user_input", "prompt": "Please sign in to the active window, then press the hotkey and say Okay when you're done.", "context": "os"}
 
 General:
 - Return exactly ONE action per JSON response.
 - Verify the previous action succeeded before moving to the next step.
 - Use the "open_app" action to open desktop apps or switch to them if they're already running. Ensure you provide the app name.
+- Typing into search bars: If you use `type_text`, it ONLY types the characters. If you need to submit the search or press Enter, you MUST output a second action: `{"type": "press_key", "key": "Enter", "context": "browser"}` (or "os"). Batch them together when possible: `[{"type": "type_text", "text": "foo", "context": "browser"}, {"type": "press_key", "key": "Enter", "context": "browser"}]`.
+- NEVER click dropdown search suggestions: When typing into a search bar (like Google or Discord), DO NOT use `click_element` or `click_box` to try and click the suggested autocomplete text that drops down. Always just press "Enter".
 - Always end with the "done" type and a spoken summary for the user.
 
 SAFEGUARDS (CRITICAL):
 1. NEVER guess coordinates. Only click on coordinates EXPLICITLY provided by the vision module. If the target is not found, DO NOT click randomly.
-2. NEVER click the Windows taskbar (the bar at the bottom of the screen with app icons). To open or switch to any app, you MUST use the "open_app" action — not click_box on a taskbar icon.
-3. Verify the Active Window: If the vision module reports that an unintended application is open (e.g. Copilot, Claude) when you intended to open a different app (e.g. Discord), you MUST recognize this. Stop and declare failure, or press Window key again to restart the search. DO NOT interact with unintended applications.
+2. FATAL ERROR: NEVER click the Windows taskbar (the bar at the bottom of the screen with app icons). The icons are too small and you will misclick and launch the wrong app. To open or switch to any app, you MUST use the `{"type": "open_app", "app": "name", "context": "os"}` action. Any attempt to `click_box` a taskbar icon is a catastrophic failure.
+3. Verify the Active Window: If the vision module reports that an unintended application is open when you intended to open a different app, you MUST recognize this. Stop and declare failure, or use `open_app` again. DO NOT interact with unintended applications.
 4. Stay strictly on task. Do NOT click or open anything irrelevant to the user's goal.
 5. If you are lost, stuck, or unsure what to do, use {"type": "speak", "text": "I need help finding the right element."} or {"type": "done", "message": "Failed to complete task."} to cleanly exit.
-6. STOP ON COMPLETION: The MOMENT you verify that the User Goal has been achieved, you MUST immediately output the "done" action to stop. Do not take any extra unnecessary actions.
+6. STOP ON COMPLETION: The MOMENT you verify that the FULL User Goal has been achieved, you MUST immediately output the "done" action to stop. 
+   - However, DO NOT output "done" prematurely. If the user asked to "open" a web app (like Discord or Spotify), simply navigating to their homepage is NOT the final step. You must click the button to actually launch the web app/client before outputting done.
 """
 
 
@@ -245,8 +252,11 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
                     ry1, rx1 = int((ymin/1000) * h), int((xmin/1000) * w)
                     ry2, rx2 = int((ymax/1000) * h), int((xmax/1000) * w)
                     
-                    draw.rectangle([rx1, ry1, rx2, ry2], outline="red", width=2)
-                    draw.text((rx1, max(0, ry1 - 12)), label, fill="red")
+                    y0, y1 = sorted([ry1, ry2])
+                    x0, x1 = sorted([rx1, rx2])
+                    
+                    draw.rectangle([x0, y0, x1, y1], outline="red", width=2)
+                    draw.text((x0, max(0, y0 - 12)), label, fill="red")
                     
                 debug_img.save(f"debug/step_{step_num}_vision_boxes.png")
                 print(f"\n[Debug] Saved debug/step_{step_num}_original.png and debug/step_{step_num}_vision_boxes.png\n")
@@ -371,7 +381,7 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
                     active_page = get_browser_page()
                     
                 execute_action(action, page=active_page)
-                time.sleep(1.0)  # Sleep between batched actions so OS UI can catch up
+                time.sleep(0.2)  # Short sleep between batched actions so OS UI can catch up
 
             # Append the cycle log (the whole batch)
             decision_messages.append({"role": "assistant", "content": json.dumps(action_data)})
@@ -399,10 +409,10 @@ if __name__ == "__main__":
     print("==================================================")
     
     # Fake transcript that bypasses the broken Audio module
-    # fake_transcript = "Open Google Docs in the browser and create a new blank document."
+    fake_transcript = "Open Google Docs in the browser and create a new blank document."
     
     # fake_transcript = "Open Discord and send a message to Sharanya saying Hi"
-    fake_transcript = "Open Spotify and play WHAT IS LOVE by TWICE"
+    # fake_transcript = "Open Spotify and play WHAT IS LOVE by TWICE"
     print(f"Submitting Fake Transcript: '{fake_transcript}'\n")
     
     try:

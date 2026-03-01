@@ -29,6 +29,8 @@ def execute_action(action: dict, page=None, browser_context=None):
         # OS-only actions
         case "open_app":  os_control.open_app(action["app"])
         case "win_key":   os_control.press_win_key()
+        case "maximize_window": os_control.maximize_window()
+        case "press_shortcut": os_control.press_shortcut(*action["keys"])
         case "click_box":
             bbox = action.get("bbox", [0, 0, 0, 0])
             cx = (bbox[1] + bbox[3]) / 2.0

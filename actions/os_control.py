@@ -40,7 +40,6 @@ def open_app(name: str):
             if w.title and search_name in w.title.lower():
                 try:
                     w.activate()
-                    time.sleep(0.5)
                     return
                 except Exception:
                     pass
@@ -53,23 +52,42 @@ def open_app(name: str):
                 if proc_name and (search_name in proc_name or proc_name.startswith(search_name)):
                     try:
                         w.activate()
-                        time.sleep(0.5)
                         return
                     except Exception:
                         pass
     except Exception as e:
         print(f"Error checking open windows: {e}")
 
+    # Special handling for Chrome to ensure Playwright debugging ports are open
+    if search_name in ["chrome", "google chrome"]:
+        print("[OS] Launching Chrome with remote debugging ports...")
+        press_shortcut('win', 'r')
+        time.sleep(0.3)
+        type_text('chrome --remote-debugging-port=9222')
+        press_single_key('enter')
+        time.sleep(1.0)
+        maximize_window()
+        return
+
     # Original method of pressing windows key, typing in the name and continuing
     press_win_key()
-    time.sleep(0.5)
+    time.sleep(0.3)
     type_text(name)
-    time.sleep(0.5)
+    time.sleep(0.2)
     press_single_key('enter')
 
 def press_shortcut(*keys):
     """Presses a combination of keys."""
     pyautogui.hotkey(*keys)
+
+def maximize_window():
+    """Natively maximizes the currently active window using pygetwindow."""
+    try:
+        active_window = gw.getActiveWindow()
+        if active_window and not active_window.isMaximized:
+            active_window.maximize()
+    except Exception as e:
+        print(f"Failed to natively maximize window: {e}")
 
 def move_and_click(x: int, y: int):
     """
@@ -84,8 +102,7 @@ def move_and_click(x: int, y: int):
     real_y = int((y / 1000) * screen_height)
     
     # Move the mouse first so hover states can register, then click
-    pyautogui.moveTo(real_x, real_y, duration=0.2)
-    time.sleep(0.5)
+    pyautogui.moveTo(real_x, real_y, duration=0.0)
     pyautogui.click(real_x, real_y)
 
 def take_screenshot(step: int = None) -> str:

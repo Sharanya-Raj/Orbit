@@ -20,16 +20,50 @@ def click_element(page, text_to_match: str):
     First tries an exact text match, then falls back to a substring match.
     """
     try:
-        # Exact text matcher
-        locator = page.get_by_text(text_to_match, exact=True).first
-        if locator.count() > 0:
-            locator.click(timeout=3000)
+        # 1. Try exact text match using Playwright's text engine
+        exact_locator = page.locator(f"text='{text_to_match}'").first
+        if exact_locator.count() > 0:
+            exact_locator.click(timeout=3000)
             return
             
-        # Fallback to loose match
-        locator = page.get_by_text(text_to_match, exact=False).first
-        if locator.count() > 0:
-            locator.click(timeout=3000)
+        # 2. Try substring match (case-insensitive)
+        substring_locator = page.locator(f"text={text_to_match}").first
+        if substring_locator.count() > 0:
+            substring_locator.click(timeout=3000)
+            return
+
+        # 3. JavaScript brute-force fallback for shadow DOMs / weird SPAs (like Discord)
+        clicked = page.evaluate("""
+            (searchText) => {
+                const elements = [...document.querySelectorAll('a, button, input, div, span')];
+                for (let el of elements) {
+                    if (el.innerText && el.innerText.includes(searchText) && el.offsetParent !== null) {
+                        el.click();
+                        return true;
+                    }
+                }
+                return false;
+            }
+        """, text_to_match)
+        
+        if clicked:
+            return
+
+        print(f"[Browser] Could not find any element matching '{text_to_match}'")
             
     except Exception as e:
         print(f"[Browser] Failed to click '{text_to_match}': {e}")
+
+def type_text(page, text: str):
+    """Types text directly into the currently focused element on the web page."""
+    try:
+        page.keyboard.type(text)
+    except Exception as e:
+        print(f"[Browser] Failed to type text: {e}")
+
+def press_key(page, key: str):
+    """Presses a specific key (e.g., 'Enter', 'Tab') on the web page."""
+    try:
+        page.keyboard.press(key)
+    except Exception as e:
+        print(f"[Browser] Failed to press key '{key}': {e}")
