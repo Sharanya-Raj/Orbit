@@ -239,10 +239,10 @@ class VoiceWidget:
 
             def process():
                 audio_data = audio.stop_recording()
-                # transcript = audio.transcribe(audio_data)
+                transcript = audio.transcribe(audio_data)
                 
                 #hardcoded example
-                transcript = "Open Spotify and play the song 'Shape of You' by Ed Sheeran"
+                # transcript = "Open Spotify and play the song 'Shape of You' by Ed Sheeran"
                 if transcript.strip():
                     self.msg_queue.put({"type": "text", "val": transcript})
                     print(f"\n[You] {transcript}\n")

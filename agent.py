@@ -322,6 +322,41 @@ decision_client = openai.OpenAI(
     api_key=os.environ.get("FEATHERLESS_API_KEY", ""),
 )
 
+import time
+import functools
+
+def retry_api_call(max_retries=3, base_delay=2.0):
+    """Decorator to retry Featherless API calls on 429 Concurrency Limits mapping backoffs."""
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            delay = base_delay
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    error_str = str(e).lower()
+                    if "429" in error_str or "concurrency" in error_str or "rate limit" in error_str:
+                        if attempt == max_retries - 1:
+                            print(f"[API Error] Max retries reached for {func.__name__}: {e}")
+                            raise
+                        print(f"[API Warning] Concurrency limit hit in {func.__name__}. Retrying in {delay}s...")
+                        time.sleep(delay)
+                        delay *= 2  # Exponential backoff
+                    else:
+                        raise # Reraise non-rate limit errors immediately
+        return wrapper
+    return decorator
+
+@retry_api_call()
+def _call_decision_model(messages, max_tokens=1500):
+    """Wrapped helper to call the decision model with retries."""
+    return decision_client.chat.completions.create(
+        model="deepseek-ai/DeepSeek-V3-0324",
+        messages=messages,
+        max_tokens=max_tokens,
+    )
+
 
 def plan_goal(instruction: str, update_log_callback=None) -> dict:
     """Creates an execution plan with observable success criteria for the given goal."""
@@ -330,8 +365,7 @@ def plan_goal(instruction: str, update_log_callback=None) -> dict:
         update_log_callback("[System] Planning how to accomplish your goal...")
 
     try:
-        response = decision_client.chat.completions.create(
-            model="deepseek-ai/DeepSeek-V3-0324",
+        response = _call_decision_model(
             messages=[
                 {"role": "system", "content": PLANNING_PROMPT.strip()},
                 {"role": "user", "content": f"User Goal: {instruction}"},
@@ -369,8 +403,7 @@ def check_goal_accomplished(instruction: str, plan: dict, screen_description: st
             f"Current Screen Description:\n{screen_description}"
         )
 
-        response = decision_client.chat.completions.create(
-            model="deepseek-ai/DeepSeek-V3-0324",
+        response = _call_decision_model(
             messages=[
                 {"role": "system", "content": GOAL_CHECK_PROMPT.strip()},
                 {"role": "user", "content": prompt},
@@ -407,13 +440,11 @@ def _play_finish_sound():
 def translate_to_english(text: str) -> tuple[str, str]:
     """Translates the text to English and returns (english_text, detected_language)."""
     try:
-        response = decision_client.chat.completions.create(
-            model="deepseek-ai/DeepSeek-V3-0324",
+        response = _call_decision_model(
             messages=[
                 {"role": "system", "content": "You are a translator. Detect the language of the user's text. If it is already English, just return 'English|||' followed by the exact text. Otherwise, return the name of the detected language, followed by '|||', followed by the English translation. Do not add any conversational filler. Example: 'Spanish|||Translate this to English'"},
                 {"role": "user", "content": text}
             ],
-            temperature=0.0,
             max_tokens=200,
         )
         content = response.choices[0].message.content.strip()
@@ -431,13 +462,11 @@ def translate_from_english(text: str, target_language: str) -> str:
         return text
         
     try:
-        response = decision_client.chat.completions.create(
-            model="deepseek-ai/DeepSeek-V3-0324",
+        response = _call_decision_model(
             messages=[
                 {"role": "system", "content": f"You are a translator. Translate the following English text into {target_language}. Return ONLY the translated text. No conversational filler."},
                 {"role": "user", "content": text}
             ],
-            temperature=0.0,
             max_tokens=200,
         )
         return response.choices[0].message.content.strip()
@@ -587,8 +616,7 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
             print(f"\n[Decision] Prompting Decision Model with Goal: '{instruction}'")
             logger.log_llm_prompt("deepseek-ai/DeepSeek-V3-0324", decision_messages)
 
-            response = decision_client.chat.completions.create(
-                model="deepseek-ai/DeepSeek-V3-0324",
+            response = _call_decision_model(
                 messages=decision_messages,
                 max_tokens=1500,
             )
