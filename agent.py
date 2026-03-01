@@ -206,6 +206,7 @@ ANTI-HALLUCINATION RULES:
 PROACTIVE NAVIGATION HINTS:
 - If the goal requires an element you don't see, identify navigation paths (Search bar, Home button, menu items).
 - Label these as "NAVIGATION AID:" so the agent knows they are indirect paths, not the target itself.
+- CONTEXT RULE: Always check the "Past Conversation Tasks". If the user is referring to "that" or "it" (e.g. implicitly continuing work on an item), use the previous tasks to determine exactly what object, file, or person they are referring to.
 
 GOAL STATUS CHECK:
 After listing elements, add this line on its own:
@@ -246,7 +247,7 @@ Rules:
 PLANNING CONSTRAINTS:
 - The user's taskbar is HIDDEN. NEVER include steps like "click the X icon in the taskbar" or "click the taskbar".
 - To open apps, always plan: "Use open_app to launch <name>"
-- To switch apps, always plan: "Use Alt+Tab to switch to <name>"
+- To switch apps, always plan: "Use open_app to switch to <name>"
 - Never plan any action that targets the bottom of the screen.
 """
 
@@ -278,6 +279,7 @@ Rules:
 - The agent has already done the work — your job is to confirm it, not to second-guess every detail.
 - If the task is "send a message" and a message matching the description is visible in chat, that is COMPLETE.
 - Partial completion is NOT completion, but do not require pixel-perfect confirmation.
+- CONTEXT RULE: Pay close attention to the "Past Conversation Tasks". Ensure the item the agent operated on matches what was done successfully in previous tasks, especially if the current goal is a continuation.
 """
 
 
@@ -292,9 +294,10 @@ SYSTEM_PROMPT = """You are an AI computer-control agent helping blind users oper
 ║  TASKBAR DOES NOT EXIST. The user's taskbar is HIDDEN. You CANNOT see it,    ║
 ║  click it, or interact with it in any way.                                    ║
 ║                                                                               ║
-║  To open ANY app:          {"type": "open_app", "app": "<name>", "context": "os"}          ║
+║  To open ANY app:                                                             ║
+║  Use {"type": "press_key", "key": "win", "context": "os"} to open start menu  ║
+║                                                                               ║
 ║  To switch between apps:   {"type": "press_shortcut", "keys": ["alt", "tab"], "context": "os"} ║
-║  There is NO other way to open or switch apps. Period.                        ║
 ║                                                                               ║
 ║  NEVER generate click_box actions where bbox ymin > 950.                      ║
 ║  The bottom 50px of the screen is OFF LIMITS — always.                        ║
@@ -306,7 +309,7 @@ ANTI-HALLUCINATION SAFEGUARDS (CRITICAL — VIOLATIONS CAUSE TASK FAILURE):
 
 1. NEVER GUESS COORDINATES. Only use bounding boxes the vision module EXPLICITLY provided. If not listed, navigate to find it.
 
-2. NEVER CLICK THE TASKBAR. The taskbar is HIDDEN and does not exist (see ABSOLUTE RULES above). ALWAYS use open_app to open apps. ALWAYS use press_shortcut ["alt","tab"] to switch between open apps. NEVER click anything with bbox ymin > 950.
+2. NEVER CLICK THE TASKBAR. The taskbar is HIDDEN and does not exist (see ABSOLUTE RULES above). ALWAYS use the windows key to search for apps. ALWAYS use press_shortcut ["alt","tab"] to switch between open apps. NEVER click anything with bbox ymin > 950.
 
 3. VERIFY BEFORE ACTING. Before every click_box:
    - The bounding box appears in the vision description (quote the label).
@@ -382,7 +385,7 @@ Task complete — ONLY when success criteria are visibly confirmed on screen:
 EXAMPLES OF CORRECT APP NAVIGATION:
 
 Goal: "Open Spotify"
-  CORRECT: {"thought": "Need to open Spotify. Using open_app.", "type": "open_app", "app": "spotify", "context": "os"}
+  CORRECT: {"thought": "Opening start menu to search for Spotify.", "type": "press_key", "key": "win", "context": "os"}
   WRONG:   clicking anything at the bottom of the screen
 
 Goal: "Switch to Discord" (Discord is already open)
@@ -396,8 +399,10 @@ Goal: "Go back to Chrome"
 NAVIGATION RULES:
 
 Opening/switching apps:
-  - ALWAYS use {"type": "open_app", "app": "<name>", "context": "os"}.
-  - NEVER click taskbar icons. NEVER click desktop shortcuts. NEVER use win_key manually for this.
+  - You MUST use the "open_app" endpoint. 
+  - To open an app, simply use: {"type": "open_app", "app": "discord", "context": "os"}
+  - This handles both opening new apps and switching to already-open apps automatically.
+  - NEVER click taskbar icons. NEVER click desktop shortcuts.
   - After opening an app, if the window is NOT maximized (desktop or other windows visible behind it), IMMEDIATELY use {"type": "maximize_window", "context": "os"} BEFORE interacting.
 
 Browser navigation:
@@ -419,6 +424,7 @@ Search interactions:
 
 SPECIFICITY RULE:
   - If the user asks for a specific item (song, file, contact), click THAT specific item. Do NOT click a generic "Play" button unless it is the only option and clearly targets the correct item.
+  - CONTEXT RULE: Always consult the "Past Conversation Tasks" context. If the current request is a continuation (e.g., "send it", "play that song"), you MUST use the exact item/file/target that was created or isolated in the immediately preceding successful task.
 
 AUTH RULE:
   - Trigger request_user_input ONLY if the screen shows a login FORM with empty credential input fields.
@@ -453,6 +459,9 @@ decision_client = openai.OpenAI(
     base_url="https://api.featherless.ai/v1",
     api_key=os.environ.get("FEATHERLESS_API_KEY", ""),
 )
+
+# Global session history to maintain context of what files were created across multiple voice commands
+agent_session_history = []
 
 
 def retry_api_call(max_retries=3, base_delay=2.0):
@@ -495,11 +504,15 @@ def plan_goal(instruction: str, update_log_callback=None) -> dict:
     if update_log_callback:
         update_log_callback("[System] Planning how to accomplish your goal...")
 
+    context_str = ""
+    if agent_session_history:
+        context_str = "Past Conversation Tasks (for context on recently created files/items):\n" + "\n".join(f"- {h}" for h in agent_session_history[-3:]) + "\n\n"
+
     try:
         response = _call_decision_model(
             messages=[
                 {"role": "system", "content": PLANNING_PROMPT.strip()},
-                {"role": "user", "content": f"User Goal: {instruction}"},
+                {"role": "user", "content": f"{context_str}Current User Goal: {instruction}"},
             ],
             max_tokens=800,
         )
@@ -527,7 +540,13 @@ def check_goal_accomplished(instruction: str, plan: dict, screen_description: st
     """Verifies whether the goal has been achieved based on the current screen description."""
     try:
         criteria_text = "\n".join(f"- {c}" for c in plan.get("success_criteria", []))
+        
+        context_str = ""
+        if agent_session_history:
+            context_str = "Past Conversation Tasks (for context):\n" + "\n".join(f"- {h}" for h in agent_session_history[-3:]) + "\n\n"
+
         prompt = (
+            f"{context_str}"
             f"User Goal: {instruction}\n\n"
             f"Success Criteria:\n{criteria_text}\n\n"
             f"Completion Signal: {plan.get('completion_signal', '')}\n\n"
@@ -649,21 +668,25 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
         f"Completion Signal: {plan.get('completion_signal', '')}"
     )
 
+    context_str = ""
+    if agent_session_history:
+        context_str = "Past Conversation Tasks (for context on recently created files/items):\n" + "\n".join(f"- {h}" for h in agent_session_history[-3:]) + "\n\n"
+
     decision_messages = [
         {"role": "system", "content": SYSTEM_PROMPT.strip()},
-        {"role": "user", "content": f"User Goal: {english_instruction}\n\n{plan_text}\n\nBegin executing the plan. Take the first action."},
+        {"role": "user", "content": f"{context_str}Current User Goal: {english_instruction}\n\n{plan_text}\n\nBegin executing the plan. Take the first action."},
     ]
     just_resumed_from_input = False
 
     # --- Loop hardening state (Task 3) ---
     total_actions_executed = 0
-    MAX_TOTAL_ACTIONS = 30
+    MAX_TOTAL_ACTIONS = 100
     recent_actions: deque = deque(maxlen=3)
     action_history: list = []  # running log of executed actions for working memory
 
-    for iteration in range(25):
+    for iteration in range(100):
         if update_log_callback:
-            update_log_callback(f"[Step {iteration + 1}/25]")
+            update_log_callback(f"[Step {iteration + 1}/100]")
 
         # 1. Take screenshot of current OS state
         screenshot_b64 = os_control.take_screenshot(step=iteration + 1)
@@ -684,7 +707,7 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
 
             # Task 4: Focused vision — inject current plan step into the user message
             current_step_index = (
-                min(iteration * len(plan_steps) // max(1, 25), len(plan_steps) - 1)
+                min(iteration * len(plan_steps) // max(1, 100), len(plan_steps) - 1)
                 if plan_steps else 0
             )
             current_step = plan_steps[current_step_index] if plan_steps else ""
@@ -821,9 +844,28 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
 
                 try:
                     action_data = json.loads(raw_content)
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as jde:
+                    print(f"[JSON Error] Failed to parse: {jde}")
                     import ast
-                    action_data = ast.literal_eval(raw_content)
+                    try:
+                        action_data = ast.literal_eval(raw_content)
+                    except Exception as literal_err:
+                        print(f"[JSON Error] ast fallback failed: {literal_err}. Falling back to decision model retry.")
+                        val_err = f"Invalid JSON format. Please ensure brackets match perfectly and it is valid JSON. Error: {jde}"
+                        logger.log_validation("batch", False, val_err)
+                        validation_retries += 1
+                        if validation_retries > MAX_VALIDATION_RETRIES:
+                            logger.log_error(f"Step {iteration+1}: JSON validation failed after {MAX_VALIDATION_RETRIES+1} attempts.")
+                            break
+                        print(f"[Validation] FAIL (attempt {validation_retries}): {val_err}")
+                        if update_log_callback:
+                            update_log_callback(f"[Validation] JSON error — retrying... ({val_err[:80]})")
+                        decision_messages.append({"role": "assistant", "content": raw_content})
+                        decision_messages.append({
+                            "role": "user",
+                            "content": f"Your response had a JSON parsing error: {val_err}. Fix the error and respond with valid JSON only."
+                        })
+                        continue
 
                 actions_raw = action_data if isinstance(action_data, list) else [action_data]
 
@@ -877,6 +919,7 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
                             logger.log_session_end(msg)
                             final_msg = translate_from_english(msg, user_language)
                             tts.speak(final_msg)
+                            agent_session_history.append(f"Completed Task: {english_instruction}")
                             return msg
                         else:
                             # Override premature done — keep going
@@ -1037,10 +1080,12 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
                 print(error_msg)
                 logger.log_session_end("Task failed due to an error.")
                 _stop_bkgd_music()
+                agent_session_history.append(f"Failed Task (due to error): {english_instruction}")
                 return "Task failed due to an error."
 
     logger.log_session_end("Maximum steps reached.")
     _stop_bkgd_music()
+    agent_session_history.append(f"Failed Task (out of steps): {english_instruction}")
     return "Maximum steps reached."
 
 

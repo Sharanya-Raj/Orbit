@@ -1,11 +1,13 @@
 # Orbit — Voice-First AI Agent for Accessible Computer Control
 
-> **Hackathon Track: Accessibility**
+> **Hackathon Tracks:**
+> 🏆 **Accessibility Track** | 🏆 **Overall Hack** | 🗣️ **Best Use of ElevenLabs** | 🚀 **Best Use of Featherless AI**
+>
 > Empowering the visually impaired, elderly, and motor-impaired to operate any Windows computer entirely by voice — no typing, no clicking, no mouse.
 
 ---
 
-## The Problem
+## 🌎 The Problem
 
 For millions of people, using a computer is not a given.
 
@@ -19,7 +21,7 @@ Existing solutions (Windows Narrator, JAWS, Dragon NaturallySpeaking) are rigid 
 
 ---
 
-## What Orbit Does
+## ✨ What Orbit Does
 
 Hold `Ctrl+Shift+Space` and speak naturally:
 
@@ -28,53 +30,50 @@ Hold `Ctrl+Shift+Space` and speak naturally:
 > *"Open Notepad and type my shopping list: milk, eggs, bread"*
 > *"Find and open the most recent Excel file on my desktop"*
 
-Orbit listens, understands, and executes — autonomously operating your mouse, keyboard, and browser until the task is complete. It speaks the result back to you when it's done.
+Orbit listens, understands, and executes — autonomously operating your mouse, keyboard, and browser until the task is complete. Along the way, it handles any pop-ups, dynamically searches for missing UI elements, and speaks the result back to you in a natural, human-like voice.
 
 No scripting. No voice-command memorization. Just natural speech.
 
 ---
 
-## Who We're Building For
+## 🏆 Hackathon Highlights
 
-### The Visually Impaired
-Orbit doesn't use accessibility trees or ARIA labels — it uses a **vision AI model that perceives the screen as a pixel image**, exactly like a sighted person would. This means it works on *every* application: legacy software, web apps, games, custom enterprise tools — anything. A blind user can interact with the full breadth of the Windows ecosystem without compromise.
+Orbit was engineered to win across multiple tracks by pushing the boundaries of what is possible with multimodal AI, low-latency reasoning, and ultra-lifelike speech synthesis.
 
-### The Elderly
-Seniors face a steep and constantly-shifting learning curve. Orbit eliminates that entirely: there is no syntax to learn, no manual to read. You speak as you would to another person, and the computer responds. Orbit can help them video call family, pay bills online, write emails, and navigate medical portals — all by talking naturally.
+### ♿ Accessibility & Overall Hack
+Orbit reimagines the entire human-computer interface. It doesn't rely on accessibility trees, which break on legacy software and modern web apps. It uses a **vision AI model that perceives the screen as a pixel image**.
+- **The Visually Impaired:** Orbit can interact with the full breadth of the Windows ecosystem without compromise. It literally reads the screen and figures out how to navigate for them.
+- **The Elderly:** No syntax to learn, no manual to read. You speak as you would to a friend.
+- **The Motor-Impaired:** Orbit reduces an entire complex workflow (clicks, typing, scrolling, form-filling) down to a single press-and-speak gesture.
 
-### The Motor-Impaired
-For users with conditions like ALS, MS, or cerebral palsy, every physical interaction with a computer is difficult and exhausting. Orbit reduces an entire workflow — clicks, typing, scrolling, form-filling — to a single press-and-speak gesture.
+### 🗣️ Best Use of ElevenLabs
+For visually impaired or elderly users, the "voice" of the assistant is the entire interface. We integrated **ElevenLabs** (Multilingual v2 Model) to completely transform the interaction loop. 
+- **Warm & Natural:** Replaced generic, robotic OS TTS with ultra-lifelike speech that feels empathetic and natural.
+- **Multilingual Support:** Orbit automatically detects the language the user speaks (e.g., Spanish). It uses DeepSeek to translate the objective to English for internal OS reasoning, takes actions, and then uses ElevenLabs to synthesize the final response *back into the user's native tongue*.
+- **Blocking & Async Playback:** Seamlessly integrated with `pygame` to lock audio playback only when necessary, preventing overlapping system sounds.
 
----
-
-## Live Demo Scenarios
-
-| Voice Command | What Orbit Does |
-|---|---|
-| "Open YouTube and play relaxing piano music" | Launches browser → navigates to YouTube → searches → clicks first result → plays video |
-| "Email my doctor's office and ask for an appointment next Tuesday" | Opens Gmail → composes email → fills recipient, subject, body → sends |
-| "What's the weather like this week?" | Opens a weather site → reads the forecast aloud via TTS |
-| "Open my Documents folder and tell me what files are there" | Navigates File Explorer → reads filenames back to user |
-| "Go to Amazon and search for large-print keyboards" | Opens browser → navigates Amazon → performs search → reads top results |
+### 🚀 Best Use of Featherless AI
+Orbit's core is a hyper-reactive loop that perceives the screen, reasons, and acts every 1-2 seconds. **Latency is life or death.**
+- **DeepSeek-V3 Infrastructure:** We use **Featherless AI** to run `DeepSeek-V3-0324` at lightning speed. Featherless's serverless AI infrastructure provides the ultra-low latency inference required to keep the agentic loop running fluidly.
+- **Complex JSON Routing:** The decision model relies on strict JSON boundaries to evaluate bounding boxes, DOM context, and error states. Featherless flawlessly handles the high-throughput schema requests, allowing Orbit to instantly plan and react to unexpectedly broken JSON (utilizing our custom reflection-retry loop).
 
 ---
 
-## Technical Architecture
+## ⚙️ Technical Architecture
 
-Orbit is a multi-threaded Python application built around a **dual-model agentic perception-action loop**. The agent does not plan all steps upfront — it perceives the current state of the screen, decides the single best next action, executes it, and re-perceives. This reactive, agentic design makes it resilient to unexpected UI states, pop-ups, login pages, and layout changes.
+Orbit is a multi-threaded Python application built around a **dual-model agentic perception-action loop**. It does not plan every step upfront — it perceives the current state, decides the single best next action, executes it, and re-perceives.
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────────┐
 │                          widget.py (UI Thread)                       │
 │  PyQt6 Glass Widget  ──  Hold-to-Talk Hotkey  ──  State Machine     │
 │        │                        │                       │            │
-│    Glow Overlay           Audio Capture             TTS Playback    │
+│    Glow Overlay           Audio Capture             ElevenLabs TTS  │
 └────────────────────────────┬────────────────────────────────────────┘
                              │  queue.Queue (thread-safe message bus)
                              ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         agent.py (Agent Thread)                      │
-│                                                                       │
 │   ┌──────────────────────────────────────────────────────────────┐   │
 │   │              Agentic Perception-Action Loop                   │   │
 │   │                                                               │   │
@@ -82,13 +81,13 @@ Orbit is a multi-threaded Python application built around a **dual-model agentic
 │   │       ▲              (Gemini 1.5 Flash via OpenRouter)        │   │
 │   │       │                       │                               │   │
 │   │       │              Decision Model                           │   │
-│   │       │           (DeepSeek-R1 via Featherless)               │   │
+│   │       │           (DeepSeek-V3 via Featherless AI)            │   │
 │   │       │                       │                               │   │
 │   │       │              JSON Action ◄──────────────────────────  │   │
 │   │       │                       │                               │   │
 │   │       │         ┌─────────────┴──────────────┐               │   │
 │   │       │         ▼                            ▼               │   │
-│   │   0.8s wait  OS Context               Browser Context        │   │
+│   │   Wait/Diff  OS Context               Browser Context        │   │
 │   │       │    (PyAutoGUI)               (Playwright/Edge)        │   │
 │   │       └────────────────────────────────────────              │   │
 │   └──────────────────────────────────────────────────────────────┘   │
@@ -97,73 +96,38 @@ Orbit is a multi-threaded Python application built around a **dual-model agentic
 
 ### The Agentic Loop (`agent.py:run_agent`)
 
-The core of Orbit is a fully agentic, reactive control loop with a maximum of 15 iterations:
-
-1. **Perceive:** Capture a full-resolution screenshot of the Windows desktop.
-2. **Describe:** Send the screenshot to **Gemini 1.5 Flash** (via OpenRouter), a multimodal vision model. Gemini returns a structured natural-language description of every visible UI element, annotated with normalized bounding boxes on a `[0, 1000]` coordinate scale (`[ymin, xmin, ymax, xmax]`).
-3. **Decide:** Feed the screen description and the full conversation history to **DeepSeek-R1** (via Featherless AI), a reasoning model. DeepSeek returns a single structured JSON action — the minimum necessary next step.
-4. **Act:** Execute the action. Actions are dispatched to one of two execution backends based on a `"context"` field:
-   - `"context": "os"` → **PyAutoGUI** (mouse moves, clicks, keyboard input, hotkeys, screenshots)
-   - `"context": "browser"` → **Playwright** (URL navigation, DOM element interaction, form filling)
-5. **Wait and repeat:** A 800ms settling delay allows the UI to animate and re-render before the next perception pass.
-6. **Terminate:** The loop exits when the agent emits `{"type": "done"}` or the iteration limit is reached.
-
-This agentic pattern — perceive, reason, act, verify — mirrors how a human assistant would operate a computer on your behalf, making Orbit robust to any application UI by design.
-
-### Dual-Model Design
-
-Orbit deliberately separates **perception** from **reasoning** across two specialized models:
-
-| Role | Model | Provider | Why |
-|---|---|---|---|
-| **Vision** | Gemini 1.5 Flash | OpenRouter | Best-in-class multimodal understanding; fast screen-to-text pipeline |
-| **Decision** | DeepSeek-R1 | Featherless AI | Strong structured reasoning for multi-step planning; JSON-reliable output |
-
-This separation means each model is doing what it does best. The vision model never has to reason about actions; the decision model never has to process raw pixels.
-
-### Coordinate System & Spatial Grounding
-
-Bounding boxes from the vision model use a normalized `0–1000` scale independent of screen resolution. `os_control.move_and_click` converts these to real screen pixel coordinates at runtime using the live screen dimensions, ensuring accuracy across different monitor resolutions and DPI settings.
-
-### Persistent Browser Session
-
-Playwright maintains a persistent browser profile stored in `.browser_profile/`, preserving login sessions and cookies across Orbit invocations. This is critical for accessibility — users (especially elderly users) should never have to re-authenticate. The agent targets Microsoft Edge (`channel="msedge"`) as it is the default Windows browser.
+1. **Plan & Translate:** Detect user language, translate to English, and formulate a multi-step execution plan with strictly observable success criteria.
+2. **Perceive:** Capture a full-resolution screenshot of the Windows desktop.
+3. **Describe:** Send to **Gemini 1.5 Flash** (via OpenRouter). Gemini returns a natural language structure of UI elements annotated with normalized `[ymin, xmin, ymax, xmax]` bounding boxes (`[0, 1000]` coordinate scale).
+4. **Decide:** Feed the screen description, DOM affordances (if in a browser), and error history to **DeepSeek-V3** (via Featherless AI). DeepSeek returns a single structured JSON action.
+5. **Act:** Execute the action via:
+   - `"context": "os"` → **PyAutoGUI** (mouse moves, clicks, keyboard input, hotkeys).
+   - `"context": "browser"` → **Playwright** (URL navigation, DOM tracking on an active Edge session).
+6. **Verify:** Has the screen structurally changed? (Computed via `imagehash` perceptual diffs). Did the action loop 3x? If so, prompt DeepSeek to aggressively correct course.
+7. **Terminate & Speak:** Exit when criteria are met or max steps reached; translate the final status back to the user's language and speak via **ElevenLabs Multilingual v2**.
 
 ### Dynamic User Input Handoff
-
-When the agent encounters a login page or a form requiring personal information it does not have, it emits a `request_user_input` action. This suspends the agentic loop, sets the UI to a "waiting" state, and blocks the agent thread on a `threading.Event`. The user's next hold-to-talk press injects their spoken reply directly into the agent's conversation context, which then resumes the loop seamlessly. This enables Orbit to handle the full complexity of real-world web interactions without hardcoding credentials.
-
-### UI: Liquid Glass Widget
-
-The floating UI is built with **PyQt6** and uses the **Windows Desktop Window Manager (DWM)** API directly via `ctypes` to apply native acrylic blur-behind (`ACCENT_ENABLE_ACRYLICBLURBEHIND`) and rounded corners (`DWMWCP_ROUND`). A full-screen transparent overlay renders a gradient glow along all four monitor edges to provide ambient visual feedback of agent state — active (blue pulse) vs. idle (transparent).
-
-### Audio Pipeline
-
-- **Capture:** `sounddevice` streams PCM audio from the default microphone into a buffer while the hotkey is held.
-- **Transcription:** The audio buffer is passed to **OpenAI Whisper** (local model) for offline, privacy-preserving speech-to-text.
-- **TTS:** `pyttsx3` converts the agent's final response back to synthesized speech, closing the voice interaction loop.
+When the agent encounters a login page or complex CAPTCHA it cannot bypass, it emits a `request_user_input` action. It suspends the agentic loop, switches the UI to a "waiting" state, and blocks execution on a `threading.Event`. The user's next spoken whisper injects their reply directly into the prompt context, resuming the loop seamlessly without losing browser state.
 
 ---
 
-## Key Engineering Decisions
+## 🛠️ Key Engineering Decisions
 
-**Why not use accessibility APIs?** Screen readers and accessibility trees only work on apps that implement them correctly. Many legacy apps, custom enterprise tools, and web components have broken or absent accessibility trees. Orbit's vision-first approach works on everything a human eye can see.
-
-**Why clipboard paste instead of `typewrite`?** `pyautogui.typewrite` is unreliable for non-ASCII characters, email addresses with `@`, and Unicode. Orbit writes text to the clipboard and pastes with `Ctrl+V`, giving it correct input for any language or special character.
-
-**Why two threads?** The Qt UI must run on the main thread. All AI inference and OS control runs on a background daemon thread, communicating back to the UI via a `queue.Queue`. This prevents the UI from blocking while the agent is executing a long task.
-
-**Why normalize coordinates to 0–1000?** A fixed coordinate space in prompts prevents the vision model from producing outputs tied to any specific resolution, making the system portable across 1080p, 1440p, and 4K displays.
+- **Why Dual-Models instead of one?** Vision models are great at drawing bounding boxes; reasoning models (like DeepSeek-V3) excel at logic and JSON adherence. Splitting perception and reasoning allows each model to do what it does best, significantly dropping error rates.
+- **Why normalized `0-1000` coordinates?** A fixed coordinate space prevents the vision model from hallucinating specific screen resolution pixels, making Orbit completely agnostic to 1080p, 1440p, or 4K monitors.
+- **Why perceptual hashes?** Early versions would get stuck re-trying failed clicks forever. Orbit now computes a perceptual `imagehash` of the screen after every action. If the screen doesn't change, Orbit dynamically injects a warning into DeepSeek-V3's prompt context to force a new approach.
+- **Advanced JSON Reflection:** If DeepSeek-V3 outputs malformed JSON, rather than crashing, the agent catches the exception, attempts an `ast.literal_eval` fallback, and automatically feeds the parser error back to the model as a prompt to self-correct.
 
 ---
 
-## Setup & Installation
+## 🚀 Setup & Installation
 
 ### Prerequisites
 - Windows 10 or 11
 - Python 3.10+
-- An [OpenRouter](https://openrouter.ai) API key (for Gemini vision)
-- A [Featherless AI](https://featherless.ai) API key (for DeepSeek reasoning)
+- [Featherless AI](https://featherless.ai) API key (for DeepSeek-V3 reasoning)
+- [OpenRouter](https://openrouter.ai) API key (for Gemini vision)
+- [ElevenLabs](https://elevenlabs.io) API key (for human-like TTS)
 
 ### Install
 
@@ -173,12 +137,11 @@ playwright install chromium
 ```
 
 ### Configure
-
 Copy `.env.example` to `.env`:
-
 ```
-OPENROUTER_API_KEY=sk-or-...
-FEATHERLESS_API_KEY=...
+FEATHERLESS_API_KEY=your_key_here
+OPENROUTER_API_KEY=your_key_here
+ELEVENLABS_API_KEY=your_key_here
 ```
 
 ### Run
@@ -186,114 +149,20 @@ FEATHERLESS_API_KEY=...
 ```bash
 python widget.py
 ```
-
 Hold `Ctrl+Shift+Space` to speak. Release to execute.
 
 ---
 
-## Project Structure
+## 🔮 What's Next for Orbit
 
-```
-orbit/
-├── widget.py            # UI layer: PyQt6 glass widget, hotkey, audio dispatch
-├── agent.py             # Agentic loop: vision, decision, action orchestration
-├── core/
-│   ├── hotkey.py        # Global hotkey listener (Windows low-level keyboard hook)
-│   ├── audio.py         # Microphone capture + Whisper transcription
-│   ├── tts.py           # Text-to-speech output
-│   └── state.py         # Thread-safe UI state machine
-├── actions/
-│   ├── __init__.py      # Action router (os vs. browser context dispatch)
-│   ├── os_control.py    # PyAutoGUI: mouse, keyboard, screenshot, clipboard
-│   └── browser.py       # Playwright: URL navigation, element interaction
-├── models.py            # JSON action schema validation
-└── frontend/            # Static React/Vite UI mockup (not connected to backend)
-```
+- **Mobile companion app** — a phone-based microphone that pairs wirelessly with Orbit on the desktop, minimizing the need to reach a keyboard hotkey at all.
+- **Scheduled accessibility chains** — "Every morning, open my email and read me the subject lines" without the user needing to initiate anything.
+- **Memory layer** — allow the agent to remember frequently used workflows and login preferences to cut latency on repetitive task clusters.
+- **Cross-platform** — port the OS control and hotkey layers to macOS and Linux.
 
 ---
 
-## Inspiration
-
-We started thinking about who gets left behind as computers become more complex. A grandmother trying to video call her grandchildren shouldn't need to know what a browser tab is. A veteran who lost fine motor control in both hands shouldn't need a mouse to send an email. A person who is blind shouldn't have to depend on screen readers that break the moment a website updates its layout.
-
-The common thread: these people don't need *simpler* computers — they need a computer that can be *spoken to*. Every one of us has, at some point, wished we could just tell our computer what we want and have it done. For most of us that's a convenience. For millions of people, it's a necessity.
-
-We were also frustrated by how brittle existing assistive tools are. They rely on accessibility trees, ARIA labels, and rigid command grammars — all of which break the moment an app updates or a login page appears. We wanted to build something that sees the screen the same way a human does and adapts in real time — a true AI agent, not a voice-activated macro.
-
----
-
-## What It Does
-
-Orbit is a floating Windows desktop agent you activate by holding `Ctrl+Shift+Space`. You speak a natural-language command — anything from "open Chrome and search for today's weather" to "go to Gmail and email Mom that I'll call her tonight" — and Orbit executes it autonomously, step by step, on your actual computer.
-
-It sees the screen using a multimodal vision AI, decides what to do next using a reasoning AI, and executes actions using real OS-level controls: moving the mouse, clicking, typing, filling forms, navigating the browser. After each action it takes a new screenshot, re-examines the screen, and decides its next move. When it's done, it speaks the result back to you.
-
-No scripts. No memorized commands. No accessibility tree required. It works on every application — legacy software, web apps, custom enterprise tools — anything a human eye can see.
-
----
-
-## How We Built It
-
-Orbit is built around a **dual-model agentic perception-action loop** implemented in Python:
-
-**Vision layer:** Every iteration starts with a full-resolution screenshot sent to **Gemini 1.5 Flash** via OpenRouter. Gemini returns a structured natural-language description of every visible UI element, each annotated with a normalized bounding box on a `[0, 1000]` coordinate scale.
-
-**Reasoning layer:** That screen description — along with the full conversation history — is passed to **DeepSeek-R1** via Featherless AI. DeepSeek returns a single JSON action representing the best next step. Separating vision from reasoning means each model does what it excels at.
-
-**Execution layer:** Actions are dispatched to one of two backends based on a `context` field: OS-level interactions (mouse, keyboard, clipboard) go through **PyAutoGUI**; browser interactions go through **Playwright** against a persistent Microsoft Edge session that preserves login cookies between runs.
-
-**UI layer:** The floating widget is built with **PyQt6** and uses the Windows **DWM API** directly via `ctypes` to render a native acrylic blur-behind glass effect and rounded corners. A full-screen transparent overlay pulses a gradient glow along all four monitor edges to provide ambient state feedback.
-
-**Audio pipeline:** `sounddevice` captures microphone input while the hotkey is held. **OpenAI Whisper** (local model) transcribes it offline. `pyttsx3` speaks the agent's final result back to the user. The entire voice loop runs on a background thread communicating with the Qt UI thread via a `queue.Queue`.
-
----
-
-## Challenges We Ran Into
-
-**Coordinate grounding across resolutions.** Getting the vision model to consistently point to the right pixel on screen was the hardest problem. We solved it by normalizing all bounding boxes to a `[0, 1000]` scale in the prompt and converting to real pixels at execution time — making the system resolution-agnostic.
-
-**Unicode and special characters in text input.** `pyautogui.typewrite` silently drops `@` signs, accented characters, and spaces mid-word. We replaced it entirely with clipboard-paste (`Ctrl+V`), which works correctly for any character in any language.
-
-**Agent loop stability.** Early versions of the loop would get stuck re-trying the same failed action. We added perceptual hash comparison between successive screenshots (`imagehash`) so the agent can detect when a screen hasn't changed and adjust its strategy rather than repeat itself.
-
-**Cross-thread UI updates.** Qt requires all widget mutations to happen on the main thread, but the agent runs on a background thread. We built a `queue.Queue` message bus so the agent can safely emit state, labels, and log entries that the UI thread picks up on a 100ms polling timer.
-
-**Handling login walls mid-task.** When the agent encounters a login page it cannot fill autonomously, it needs to pause and ask the user. We implemented a `request_user_input` action that suspends the agentic loop on a `threading.Event`, switches the widget to a "waiting" state, and resumes the loop with the user's next spoken reply injected directly into the agent's conversation context.
-
----
-
-## Accomplishments That We're Proud Of
-
-- Built a fully agentic, multi-model system that can operate the *entire* Windows OS — not just a single app — from a single voice command.
-- The vision-first approach means Orbit works on applications that have zero accessibility support — legacy software, custom enterprise tools, anything.
-- Seamless mid-task user input handoff: the agent pauses, waits for voice input, and resumes without losing context.
-- A native-feeling glass UI using direct DWM API calls — it looks like it belongs on Windows 11, not like a Python script.
-- End-to-end privacy: Whisper transcription runs locally, no audio ever leaves the machine.
-
----
-
-## What We Learned
-
-- Splitting perception and reasoning across two specialized models dramatically improves reliability compared to asking a single model to do both.
-- Agentic loops need explicit termination conditions and stall detection — without them, they will confidently repeat the same broken action forever.
-- The hardest part of building accessible software is not the AI — it's making the interaction model truly zero-friction for someone who cannot see or struggle to hold a mouse.
-- Windows DWM composition is surprisingly approachable from Python `ctypes`, and the visual difference between a native acrylic glass blur and a fake CSS-style approximation is immediately noticeable.
-
----
-
-## What's Next for Orbit
-
-- **Mobile companion app** — a phone-based microphone that pairs wirelessly with Orbit on the desktop, so users don't need to reach a keyboard hotkey at all.
-- **Scheduled and triggered tasks** — "Every morning, open my email and read me the subject lines" without the user needing to initiate anything.
-- **Memory layer** — let the agent remember frequently-used workflows, login preferences, and app locations across sessions to reduce repeated reasoning steps.
-- **Multi-monitor and remote desktop support** — extend the coordinate system to span multiple displays or RDP sessions.
-- **Cross-platform** — port the OS control and hotkey layers to macOS and Linux, making Orbit available to a broader population of users who need it.
-
----
-
-## Team
-
-Built at Quackhacks 2026 in 24 hours by Orbit.
-
+## 👥 Team
+Built at Quackhacks 2026 by Orbit.
 - Om Rana
 - Sharanya Raj

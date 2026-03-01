@@ -77,11 +77,35 @@ def open_app(name: str):
         maximize_window()
         return
 
+    # Special handling for common applications that Windows Search hallucinates into Edge web searches
+    if search_name == "discord":
+        print("[OS] Launching Discord via URI protocol...")
+        # Press win+r and type discord: or launch the local app data path
+        press_shortcut('win', 'r')
+        time.sleep(0.3)
+        # Windows supports running certain apps right from 'run' if they are in path or use custom URI shells
+        type_text(rf'%localappdata%\Discord\Update.exe --processStart Discord.exe')
+        press_single_key('enter')
+        time.sleep(2)
+        maximize_window()
+        return
+        
+    if search_name == "spotify":
+        print("[OS] Launching Spotify via shell...")
+        press_shortcut('win', 'r')
+        time.sleep(0.3)
+        type_text('spotify')
+        press_single_key('enter')
+        time.sleep(2)
+        maximize_window()
+        return
+
     # Original method of pressing windows key, typing in the name and continuing
+    print(f"[OS] Launching generic app '{name}' via Start menu...")
     press_win_key()
-    time.sleep(0.3)
+    time.sleep(0.4)
     type_text(name)
-    time.sleep(0.2)
+    time.sleep(0.6)
     press_single_key('enter')
 
 def press_shortcut(*keys):
