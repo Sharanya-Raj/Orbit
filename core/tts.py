@@ -3,6 +3,7 @@ import os
 import io
 
 try:
+    os.environ["SDL_AUDIODRIVER"] = "directsound"  # Prevent WASAPI exclusive lock conflicts
     import pygame
     from elevenlabs.client import ElevenLabs
     HAS_ELEVENLABS = True
@@ -30,7 +31,7 @@ def speak(text: str):
             try:
                 audio_stream = client.text_to_speech.convert(
                     text=text,
-                    voice_id="21m00Tcm4TlvDq8ikWAM", # Default 'Rachel' voice
+                    voice_id="pFZP5JQG7iQjIQuC4Bku", # Lily - Warm & Friendly
                     model_id="eleven_multilingual_v2",
                     output_format="mp3_44100_128",
                 )
@@ -38,13 +39,18 @@ def speak(text: str):
                 # Consume the generator stream into bytes
                 audio_bytes = b"".join([chunk for chunk in audio_stream if chunk])
                 
-                pygame.mixer.init()
+                if not pygame.mixer.get_init():
+                    pygame.mixer.init()
+                    
                 pygame.mixer.music.load(io.BytesIO(audio_bytes))
                 pygame.mixer.music.play()
                 
                 # Blocking — wait for speech to finish before returning
                 while pygame.mixer.music.get_busy():
                     pygame.time.Clock().tick(10)
+                    
+                # Free the audio lock
+                pygame.mixer.music.unload()
                 return
                 
             except Exception as e:

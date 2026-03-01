@@ -184,15 +184,63 @@ decision_client = openai.OpenAI(
 # print("OpenRouter API Key:", os.environ.get("OPENROUTER_API_KEY"))
 # print("Featherless API Key:", os.environ.get("FEATHERLESS_API_KEY"))    
 
+def translate_to_english(text: str) -> tuple[str, str]:
+    """Translates the text to English and returns (english_text, detected_language)."""
+    try:
+        response = decision_client.chat.completions.create(
+            model="deepseek-ai/DeepSeek-V3-0324",
+            messages=[
+                {"role": "system", "content": "You are a translator. Detect the language of the user's text. If it is already English, just return 'English|||' followed by the exact text. Otherwise, return the name of the detected language, followed by '|||', followed by the English translation. Do not add any conversational filler. Example: 'Spanish|||Translate this to English'"},
+                {"role": "user", "content": text}
+            ],
+            temperature=0.0,
+            max_tokens=200,
+        )
+        content = response.choices[0].message.content.strip()
+        parts = content.split('|||', 1)
+        if len(parts) == 2:
+            return parts[1].strip(), parts[0].strip()
+        return text, "English"
+    except Exception as e:
+        print(f"[Translation] Failed to translate to English: {e}")
+        return text, "English"
+
+def translate_from_english(text: str, target_language: str) -> str:
+    """Translates english text back into the user's original language."""
+    if target_language.lower() == "english":
+        return text
+        
+    try:
+        response = decision_client.chat.completions.create(
+            model="deepseek-ai/DeepSeek-V3-0324",
+            messages=[
+                {"role": "system", "content": f"You are a translator. Translate the following English text into {target_language}. Return ONLY the translated text. No conversational filler."},
+                {"role": "user", "content": text}
+            ],
+            temperature=0.0,
+            max_tokens=200,
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"[Translation] Failed to translate back to {target_language}: {e}")
+        return text
+
 def run_agent(instruction: str, update_log_callback=None) -> str:
     """Runs the main perception-action loop to execute the user instruction."""
     logger.log_session_start(instruction)
+    
+    # --- MULTI-LINGUAL SUPPORT: Translate to English for reasoning ---
+    english_instruction, user_language = translate_to_english(instruction)
+    print(f"\n[Multi-Lingual] Detected Language: {user_language} -> Translated mapped goal: '{english_instruction}'\n")
+    
     if update_log_callback:
         update_log_callback(f"🎤 You: {instruction}")
+        if user_language.lower() != "english":
+            update_log_callback(f"🌐 Translated to English: {english_instruction}")
 
     decision_messages = [
         {"role": "system", "content": SYSTEM_PROMPT.strip()},
-        {"role": "user",   "content": f"User Goal: {instruction}\nWhat's next?"}
+        {"role": "user",   "content": f"User Goal: {english_instruction}\nWhat's next?"}
     ]
     just_resumed_from_input = False  # tracks when we need to append instead of overwrite
 
@@ -213,7 +261,7 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
                 {
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": f"User Goal: {instruction}\nDescribe this screen and list the bounding boxes for any relevant elements to help achieve this goal."},
+                        {"type": "text", "text": f"User Goal: {english_instruction}\nDescribe this screen and list the bounding boxes for any relevant elements to help achieve this goal."},
                         {"type": "image_url", "image_url": {
                             "url": f"data:image/png;base64,{screenshot_b64}"
                         }}
@@ -282,7 +330,7 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
             return "Task failed at vision step due to an error."
 
         # 3. Add vision context to decision messages
-        screen_update = f"Current Screen Description:\n{screen_description}{dom_context}\n\nUser Goal: {instruction}\nWhat should I do next? (Reply only with JSON)"
+        screen_update = f"Current Screen Description:\n{screen_description}{dom_context}\n\nUser Goal: {english_instruction}\nWhat should I do next? (Reply only with JSON)"
         if just_resumed_from_input:
             # After user input confirmation, APPEND the screen update (never overwrite the confirmation)
             decision_messages.append({"role": "user", "content": screen_update})
@@ -295,7 +343,7 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
             if update_log_callback:
                 update_log_callback("[System] Deciding action...")
 
-            print(f"\n[Decision] Prompting Decision Model with Goal: '{instruction}'")
+            print(f"\n[Decision] Prompting Decision Model with Goal: '{english_instruction}'")
             print(f"       and Messages Context: {json.dumps(decision_messages[-1]['content'])[:100]}...\n")
             logger.log_llm_prompt("deepseek-ai/DeepSeek-V3-0324", decision_messages)
 
@@ -387,7 +435,10 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
                     # Play the completion sound
                     try:
                         import pygame
-                        pygame.mixer.init()
+                        import os
+                        os.environ["SDL_AUDIODRIVER"] = "directsound"
+                        if not pygame.mixer.get_init():
+                            pygame.mixer.init()
                         pygame.mixer.music.load("sounds/Note_block_chime_scale.ogg")
                         pygame.mixer.music.play()
                     except Exception as e:
@@ -395,18 +446,21 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
     
                     msg = action.get("message", "Done.")
                     logger.log_session_end(msg)
-                    tts.speak(msg)
-                    return msg
+                    translated_msg = translate_from_english(msg, user_language)
+                    tts.speak(translated_msg)
+                    return translated_msg
     
                 if action["type"] == "speak":
-                    tts.speak(action["text"])
+                    translated_text = translate_from_english(action["text"], user_language)
+                    tts.speak(translated_text)
     
                 if action["type"] == "request_user_input":
                     # Speak the prompt so the user knows what to type
                     prompt = action.get("prompt", "Please provide input, then press OK on the widget.")
-                    tts.speak(prompt)
+                    translated_prompt = translate_from_english(prompt, user_language)
+                    tts.speak(translated_prompt)
                     if update_log_callback:
-                        update_log_callback(f"⌨️ Waiting for user input: {prompt}")
+                        update_log_callback(f"⌨️ Waiting for user input: {translated_prompt}")
     
                     # Signal the widget to switch to input-waiting mode
                     state.state.set_state("waiting_for_input")
