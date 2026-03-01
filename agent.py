@@ -431,10 +431,7 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
                     active_page = get_browser_page()
                     
                 execute_action(action, page=active_page)
-                time.sleep(0.2)  # Short sleep between batched actions so OS UI can catch up
-            
-            if just_resumed_from_input:
-                continue
+                time.sleep(1.0)  # Short sleep between batched actions so OS UI can catch up
 
             # Append the cycle log (the whole batch)
             decision_messages.append({"role": "assistant", "content": json.dumps(action_data)})

@@ -1,6 +1,9 @@
 import pyaudio
 import numpy as np
-import whisper
+import os
+import io
+import wave
+from elevenlabs.client import ElevenLabs
 
 # Global flag for recording state
 is_recording = False
@@ -8,11 +11,15 @@ audio_data = []
 stream = None
 actual_samplerate = 16000
 pa = None
-stream = None
+
+# Initialize the ElevenLabs client
+# Requires ELEVENLABS_API_KEY to be set in the environment (.env)
+el_client = None
 
 def get_model():
-    # 'base' is significantly more accurate than 'tiny' with acceptable speed
-    return whisper.load_model("base")
+    # Model loading is no longer required for ElevenLabs API
+    # Returning None to satisfy legacy signatures in other files that might call this
+    return None
 
 def _callback(in_data, frame_count, time_info, status):
     global is_recording, audio_data
@@ -58,24 +65,45 @@ def stop_recording() -> np.ndarray:
     return np.array([])
 
 def transcribe(audio_array: np.ndarray, model=None) -> str:
-    """Uses whisper to transcribe the numpy audio array into text."""
+    """Uses ElevenLabs Scribe API to transcribe the numpy audio array into text."""
+    global el_client
     if len(audio_array) == 0:
         return ""
-    
-    if model is None:
-        model = get_model()
         
-    # whisper requires float32 between -1 and 1
-    audio_float = audio_array.astype(np.float32)
+    if el_client is None:
+        api_key = os.environ.get("ELEVENLABS_API_KEY")
+        if not api_key:
+            print("[STT Error] ELEVENLABS_API_KEY environment variable is not set.")
+            return "(Transcription failed: No ElevenLabs API key)"
+        el_client = ElevenLabs(api_key=api_key)
 
-    # Pad/trim audio to whisper expected format if necessary
-    audio = whisper.pad_or_trim(audio_float)
-    
-    # make log-Mel spectrogram and move to the same device as the model
-    mel = whisper.log_mel_spectrogram(audio).to(model.device)
-    
-    # decode the audio — lock to English to prevent language misidentification
-    options = whisper.DecodingOptions(fp16=False, language="en")
-    result = whisper.decode(model, mel, options)
-    
-    return result.text
+    try:
+        # ElevenLabs expects a standard audio file format (like mp3, wav, flac).
+        # We need to convert our float32 numpy array into an in-memory WAV file (int16).
+        
+        # 1. Normalize and scale to int16 format
+        audio_normalized = np.clip(audio_array, -1.0, 1.0)
+        audio_int16 = (audio_normalized * 32767).astype(np.int16)
+        
+        # 2. Write to an in-memory BytesIO buffer as a WAV file
+        wav_buffer = io.BytesIO()
+        with wave.open(wav_buffer, 'wb') as wav_file:
+            wav_file.setnchannels(1)           # Mono
+            wav_file.setsampwidth(2)           # 2 bytes per sample (int16)
+            wav_file.setframerate(16000)       # 16kHz
+            wav_file.writeframes(audio_int16.tobytes())
+            
+        wav_buffer.seek(0)
+
+        # 3. Send to ElevenLabs Speech-to-Text API
+        print("[STT] Sending audio to ElevenLabs for transcription...")
+        response = el_client.speech_to_text.convert(
+            file=wav_buffer,
+            model_id="scribe_v2"
+        )
+        
+        return response.text.strip()
+        
+    except Exception as e:
+        print(f"[STT Error] Speech-to-text failed: {e}")
+        return f"(Transcription error: {str(e)})"
