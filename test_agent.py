@@ -9,7 +9,7 @@ if __name__ == "__main__":
     print("==================================================")
     
     # Fake transcript that bypasses the broken Audio module
-    fake_transcript = "Open Google Docs in the browser and create a new blank document."
+    fake_transcript = "Open Google Chrome."
     
     print(f"Submitting Fake Transcript: '{fake_transcript}'\n")
     

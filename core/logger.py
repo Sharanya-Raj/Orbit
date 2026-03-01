@@ -96,3 +96,32 @@ def log_session_start(instruction: str) -> None:
 def log_session_end(result: str) -> None:
     _logger.info(f"SESSION END  |  result: {result!r}")
     _logger.info("=" * 70)
+
+
+def log_screenshot(step: int, path: str) -> None:
+    """Log the file path of the screenshot taken at this step."""
+    _logger.info(f"[SCREENSHOT] step={step} path={path!r}")
+
+
+def log_validation(action_type: str, success: bool, error: str = "") -> None:
+    """Log the result of Pydantic action validation."""
+    if success:
+        _logger.info(f"[VALIDATION OK] type={action_type!r}")
+    else:
+        _logger.warning(f"[VALIDATION FAIL] type={action_type!r} error={error!r}")
+
+
+def log_execution_result(action_type: str, success: bool, error: str = "") -> None:
+    """Log whether an action executed successfully."""
+    if success:
+        _logger.info(f"[EXEC OK] type={action_type!r}")
+    else:
+        _logger.error(f"[EXEC FAIL] type={action_type!r} error={error!r}")
+
+
+def log_screen_diff(step: int, action_type: str, changed: bool, distance: int) -> None:
+    """Log the perceptual hash diff result after an action."""
+    _logger.info(
+        f"[SCREEN DIFF] step={step} action={action_type!r} "
+        f"changed={changed} hamming={distance}"
+    )

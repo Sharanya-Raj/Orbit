@@ -285,6 +285,9 @@ class VoiceWidget:
 # ── Entry Point ─────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    from agent import display_welcome_banner
+    display_welcome_banner()
+    
     print("Starting Orbit Voice Assistant…")
     root = tk.Tk()
     print("Initializing GUI window…")

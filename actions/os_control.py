@@ -32,35 +32,43 @@ def _get_process_name(hwnd):
 def open_app(name: str):
     """Opens an application by navigating to it if already open, else uses the start menu."""
     try:
-        search_name = name.lower()
+        search_name = name.lower().strip()
         windows = gw.getAllWindows()
         
-        # 1. Try to find by exact visual title match
-        for w in windows:
-            if w.title and search_name in w.title.lower():
+        # 1. Try to find by exact visual title match (e.g., "Spotify Free", "Google Chrome")
+        # Sort windows to bring visible ones with titles first
+        valid_windows = [w for w in windows if w.title and w.visible]
+        
+        for w in valid_windows:
+            if search_name in w.title.lower():
                 try:
                     w.activate()
+                    print(f"[OS] Found '{search_name}' by title: {w.title}. Activating.")
                     return
                 except Exception:
                     pass
                     
         # 2. Try to find by process executable name
         # Handles cases like Spotify where window title changes to the song name
-        for w in windows:
-            if w.title and w.visible:
-                proc_name = _get_process_name(w._hWnd)
-                if proc_name and (search_name in proc_name or proc_name.startswith(search_name)):
-                    try:
-                        w.activate()
-                        return
-                    except Exception:
-                        pass
+        for w in valid_windows:
+            proc_name = _get_process_name(w._hWnd)
+            if proc_name and (search_name in proc_name or proc_name.startswith(search_name)):
+                try:
+                    # Windows API sometimes requires simulating a keypress to allow programmatic focus stealing
+                    pyautogui.press('alt')
+                    w.activate()
+                    print(f"[OS] Found '{search_name}' by process: {proc_name}. Activating.")
+                    return
+                except Exception as e:
+                    print(f"[OS] Failed to activate {w.title} (Process: {proc_name}): {e}")
+                    pass
     except Exception as e:
         print(f"Error checking open windows: {e}")
 
     # Special handling for Chrome to ensure Playwright debugging ports are open
     if search_name in ["chrome", "google chrome"]:
-        print("[OS] Launching Chrome with remote debugging ports...")
+        # We only reach here if Chrome was NOT found in the loops above.
+        print("[OS] Chrome not found running. Launching Chrome with remote debugging ports...")
         press_shortcut('win', 'r')
         time.sleep(0.3)
         type_text('chrome.exe --remote-debugging-port=9222')

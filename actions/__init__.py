@@ -1,12 +1,38 @@
 import time
+import logging
 from . import os_control, browser
-from core import tts
+from core import tts, logger
+
+
+def validate_action_safe(action: dict):
+    """Block any action that targets the taskbar region (bbox ymin > 950).
+
+    Returns (action_to_run, was_replaced) where was_replaced=True means
+    the original action was intercepted and a safe replacement was returned.
+    """
+    if action.get("type") == "click_box":
+        bbox = action.get("bbox", [])
+        if len(bbox) == 4 and bbox[0] > 950:  # ymin > 950 → bottom of screen
+            logging.warning(f"BLOCKED taskbar click attempt: {action}")
+            return {
+                "type": "speak",
+                "thought": "Attempted to click taskbar area which is hidden. Using open_app instead.",
+                "text": "The taskbar is hidden. Please use the app launcher.",
+                "context": "os",
+            }, True
+    return action, False
+
 
 def execute_action(action: dict, page=None, browser_context=None):
     """
     The action router. Uses the 'context' field from the action to route correctly.
     Since Playwright was removed, most actions are OS-level now, except click_element.
     """
+    action, replaced = validate_action_safe(action)
+    if replaced:
+        tts.speak(action["text"])
+        return
+
     use_browser = action.get("context") == "browser" and page is not None
     
     match action["type"]:
@@ -44,5 +70,6 @@ def execute_action(action: dict, page=None, browser_context=None):
         case "done":       pass
         case "request_user_input": pass
         case _:
+            logger.log_error(f"[Router] Unknown action type: {action.get('type')!r}")
             print(f"[Router] Unknown action type: {action.get('type')}")
     
