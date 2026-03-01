@@ -45,3 +45,4 @@ def execute_action(action: dict, page=None, browser_context=None):
         case "request_user_input": pass
         case _:
             print(f"[Router] Unknown action type: {action.get('type')}")
+    

@@ -1,216 +1,310 @@
 import tkinter as tk
 import threading
 import queue
+import ctypes
+from ctypes import c_int, sizeof, POINTER, pointer, Structure, byref
 from core import hotkey, audio, state
 from agent import run_agent
 import pygame
-import agent as agent_module  # needed to set user_reply_text and signal event
+import agent as agent_module
 
-BG = '#18181c'  # widget background (transparent outer if possible)
+
+# ── Windows Composition Structures ──────────────────────────────────────────
+
+class ACCENTPOLICY(Structure):
+    _fields_ = [
+        ("AccentState", c_int),
+        ("AccentFlags", c_int),
+        ("GradientColor", c_int),
+        ("AnimationId", c_int),
+    ]
+
+class WINDOWCOMPOSITIONATTRIBDATA(Structure):
+    _fields_ = [
+        ("Attribute", c_int),
+        ("Data", POINTER(ACCENTPOLICY)),
+        ("SizeOfData", c_int),
+    ]
+
+
+# ── Windows Visual Effects ──────────────────────────────────────────────────
+
+def apply_acrylic_blur(hwnd, tint_abgr=0x18101018):
+    policy = ACCENTPOLICY()
+    policy.AccentState = 4
+    policy.GradientColor = tint_abgr
+
+    data = WINDOWCOMPOSITIONATTRIBDATA()
+    data.Attribute = 19
+    data.Data = pointer(policy)
+    data.SizeOfData = sizeof(policy)
+    ctypes.windll.user32.SetWindowCompositionAttribute(hwnd, pointer(data))
+
+
+def apply_rounded_corners(hwnd):
+    preference = c_int(2)
+    ctypes.windll.dwmapi.DwmSetWindowAttribute(
+        hwnd, 33, pointer(preference), sizeof(preference)
+    )
+
+
+def apply_mica_if_available(hwnd):
+    try:
+        val = c_int(2)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 38, byref(val), sizeof(val))
+    except Exception:
+        pass
+
+
+# ── Canvas Helpers ──────────────────────────────────────────────────────────
+
+T_COLOR = "#000001"
+
+
+def create_round_rect(canvas, x1, y1, x2, y2, radius=25, **kw):
+    r = radius
+    pts = [
+        x1 + r, y1,   x2 - r, y1,
+        x2, y1,  x2, y1 + r,
+        x2, y2 - r,  x2, y2,
+        x2 - r, y2,  x1 + r, y2,
+        x1, y2,  x1, y2 - r,
+        x1, y1 + r,  x1, y1,
+    ]
+    return canvas.create_polygon(pts, smooth=True, **kw)
+
+
+# ── State Styles ────────────────────────────────────────────────────────────
+
+STATE_STYLES = {
+    "idle": {
+        "dot": "#4ade80",
+        "text": "#9090a8",
+        "label": "Orbit  ·  Hold to speak",
+        "border": "#3a3a50",
+    },
+    "recording": {
+        "dot": "#f87171",
+        "text": "#f0d0d0",
+        "label": "Listening…",
+        "border": "#5a3040",
+    },
+    "thinking": {
+        "dot": "#a78bfa",
+        "text": "#c8b8f0",
+        "label": "Thinking…",
+        "border": "#403058",
+    },
+    "waiting_for_input": {
+        "dot": "#60a5fa",
+        "text": "#b0c8f0",
+        "label": "What should I say?",
+        "border": "#304058",
+    },
+    "done": {
+        "dot": "#4ade80",
+        "text": "#9090a8",
+        "label": "Done",
+        "border": "#3a3a50",
+    },
+}
+
+
+# ── Main Widget ─────────────────────────────────────────────────────────────
 
 class VoiceWidget:
-    def __init__(self, root):
+    W, H = 340, 48
+    DOT_R = 4
+    DOT_X = 20
+
+    def __init__(self, root: tk.Tk):
         self.root = root
-        
-        # UI Setup for the Pill Widget
-        self.root.overrideredirect(True)          # No title bar
-        self.root.attributes("-topmost", True)    # Always on top
-        self.root.configure(bg=BG)
-        
-        # Position at Top Center initially
-        window_width = 300
-        window_height = 50
-        screen_width = self.root.winfo_screenwidth()
-        x = int(screen_width / 2 - window_width / 2)
-        y = 20
-        self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
-        
-        # Build UI Elements
-        self.pill_frame = tk.Frame(self.root, bg=BG)
-        self.pill_frame.pack(fill=tk.BOTH, expand=True)
-        
-        self.status_label = tk.Label(
-            self.pill_frame, 
-            text="🎙️ Orbit (Idle)", 
-            fg="#2a2a35", 
-            bg=BG, 
-            font=("Segoe UI", 12, "bold")
-        )
-        self.status_label.pack(pady=10)
-        
-        # Transcript Log Extension
-        self.log_frame = tk.Frame(self.root, bg='#1e1e24')
-        self.log_text = tk.Text(
-            self.log_frame, 
-            height=5, 
-            bg='#1e1e24', 
-            fg='white', 
-            font=("Segoe UI", 10),
-            state=tk.DISABLED, 
-            bd=0
-        )
-        self.log_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
-        
-        # Draggable logic
-        self.pill_frame.bind("<ButtonPress-1>", self.start_drag)
-        self.pill_frame.bind("<B1-Motion>", self.do_drag)
-        self.status_label.bind("<ButtonPress-1>", self.start_drag)
-        self.status_label.bind("<B1-Motion>", self.do_drag)
-        
-        self.x_offset = 0
-        self.y_offset = 0
-        self._pre_record_state = "idle"  # tracks state before recording started
-        
-        # Queue for cross-thread comms
-        self.msg_queue = queue.Queue()
-        
-        # Register global hotkey
-        print("Registering global hold-to-talk hotkey...")
+        self._setup_window()
+        self._build_canvas()
+        self._init_drag()
+
+        self._pre_record_state = "idle"
+        self.msg_queue: queue.Queue = queue.Queue()
+
+        print("Registering global hold-to-talk hotkey…")
         hotkey.listen(self.on_hotkey_start, self.on_hotkey_stop)
-        
-        # State tick loop
-        self.update_ui()
-        
-        # Initialize pygame mixer once for sound effects
+
         try:
             pygame.mixer.init()
         except Exception as e:
-            print(f"[Widget] pygame init failed (sounds disabled): {e}")
-        
+            print(f"[Widget] pygame init failed: {e}")
+
         self.set_ui_state("idle")
-        print("Initialization complete. Widget is ready.")
+        self._tick()
+        print("Initialization complete. Orbit is ready.")
 
-    def start_drag(self, event):
-        self.x_offset = event.x
-        self.y_offset = event.y
+    def _setup_window(self):
+        self.root.overrideredirect(True)
+        self.root.attributes("-topmost", True)
+        self.root.configure(bg=T_COLOR)
+        self.root.attributes("-transparentcolor", T_COLOR)
 
-    def do_drag(self, event):
-        x = self.root.winfo_pointerx() - self.x_offset
-        y = self.root.winfo_pointery() - self.y_offset
+        sx = self.root.winfo_screenwidth()
+        x = (sx - self.W) // 2
+        self.root.geometry(f"{self.W}x{self.H}+{x}+14")
+        self.root.update_idletasks()
+
+        hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
+        apply_mica_if_available(hwnd)
+        apply_acrylic_blur(hwnd, tint_abgr=0x18101018)
+        apply_rounded_corners(hwnd)
+
+    def _build_canvas(self):
+        self.canvas = tk.Canvas(
+            self.root, bg=T_COLOR, highlightthickness=0,
+            width=self.W, height=self.H,
+        )
+        self.canvas.pack(fill=tk.BOTH, expand=True)
+
+        p = 2
+        cy = self.H // 2
+
+        # Clean border pill — transparent fill, subtle outline
+        self.border_pill = create_round_rect(
+            self.canvas, p, p, self.W - p, self.H - p,
+            radius=20, fill=T_COLOR, outline="#3a3a50", width=1,
+        )
+
+        # Status dot — clean, no outline
+        dr = self.DOT_R
+        self.dot = self.canvas.create_oval(
+            self.DOT_X - dr, cy - dr, self.DOT_X + dr, cy + dr,
+            fill="#4ade80", outline="",
+        )
+
+        # Label text
+        self.label = self.canvas.create_text(
+            self.DOT_X + 14, cy,
+            text="Orbit  ·  Hold to speak",
+            fill="#9090a8",
+            font=("Segoe UI", 10),
+            anchor="w",
+        )
+
+    # ── Drag ────────────────────────────────────────────────────────────────
+
+    def _init_drag(self):
+        self._dx = 0
+        self._dy = 0
+        self.canvas.bind("<ButtonPress-1>", self._drag_start)
+        self.canvas.bind("<B1-Motion>", self._drag_move)
+
+    def _drag_start(self, e):
+        self._dx, self._dy = e.x, e.y
+
+    def _drag_move(self, e):
+        x = self.root.winfo_pointerx() - self._dx
+        y = self.root.winfo_pointery() - self._dy
         self.root.geometry(f"+{x}+{y}")
 
-    def add_log(self, text):
-        self.log_text.config(state=tk.NORMAL)
-        self.log_text.insert(tk.END, text + "\n")
-        self.log_text.see(tk.END)
-        self.log_text.config(state=tk.DISABLED)
+    # ── UI State ────────────────────────────────────────────────────────────
+
+    def _truncate(self, text, mx=38):
+        return text if len(text) <= mx else text[: mx - 1] + "…"
+
+    def set_label(self, text, color=None):
+        cur = state.state.get_state()
+        c = color or STATE_STYLES.get(cur, STATE_STYLES["idle"])["text"]
+        self.canvas.itemconfig(self.label, text=self._truncate(text), fill=c)
 
     def set_ui_state(self, new_state):
-        # Always keep the state object in sync with the UI
         state.state.set_state(new_state)
+        s = STATE_STYLES.get(new_state, STATE_STYLES["idle"])
 
-        if new_state == "idle":
-            self.status_label.config(text="🎙️ Orbit (Idle)", fg="#2a2a35")
-            self.collapse()
-        elif new_state == "recording":
-            self.status_label.config(text="🎙️ Recording...", fg="#6c63ff")
-            self.collapse()
-        elif new_state == "thinking":
-            self.status_label.config(text="🤖 Thinking...", fg="#a78bfa")
-            self.expand()
-        elif new_state == "waiting_for_input":
-            self.status_label.config(text="⌨️ Type it in, then press hotkey", fg="#fbbf24")
-            self.expand()
-        elif new_state == "done":
-            self.status_label.config(text="✅ Done — press hotkey for next task", fg="#22d3a5")
-            self.expand()
-            # Auto-reset to idle after 4s so next hotkey press starts fresh
-            self.root.after(4000, lambda: self.set_ui_state("idle"))
+        self.canvas.itemconfig(self.dot, fill=s["dot"])
+        self.canvas.itemconfig(self.border_pill, outline=s["border"])
+        self.set_label(s["label"], s["text"])
 
-    def expand(self):
-        """Show transcript log"""
-        self.root.geometry("350x150")
-        self.log_frame.pack(fill=tk.BOTH, expand=True)
+        if new_state == "done":
+            self.root.after(3000, lambda: self.set_ui_state("idle"))
 
-    def collapse(self):
-        """Hide transcript log to just pill"""
-        self.log_frame.pack_forget()
-        
+    # ── Hotkey Handlers ─────────────────────────────────────────────────────
+
     def on_hotkey_start(self):
-        current_state = state.state.get_state()
-        print(f"[Hotkey] Pressed. Current state is: {current_state}")
-        
-        if current_state in ["idle", "done", "waiting_for_input"]:
-            self._pre_record_state = current_state  # remember what we were doing before recording
-            # Play a short sound to indicate recording started
+        cur = state.state.get_state()
+        print(f"[Hotkey] Pressed. Current state: {cur}")
+
+        if cur in ("idle", "done", "waiting_for_input"):
+            self._pre_record_state = cur
             try:
                 pygame.mixer.music.load("sounds/Note_block_bell.mp3")
                 pygame.mixer.music.play()
             except Exception:
-                pass  # Sound is optional — don't crash if file is missing
-            
-            # Start Recording
-            self._pre_record_state = current_state  # Save state before overwriting
+                pass
+
             state.state.set_state("recording")
             self.msg_queue.put({"type": "state", "val": "recording"})
             threading.Thread(target=audio.start_recording, daemon=True).start()
 
     def on_hotkey_stop(self):
-        current_state = state.state.get_state()
-        print(f"[Hotkey] Released. Current state is: {current_state}")
-        
-        if current_state == "recording":
+        cur = state.state.get_state()
+        print(f"[Hotkey] Released. Current state: {cur}")
+
+        if cur == "recording":
             was_waiting = self._pre_record_state == "waiting_for_input"
-            
             state.state.set_state("thinking")
             self.msg_queue.put({"type": "state", "val": "thinking"})
-            
-            def process_audio():
+
+            def process():
                 audio_data = audio.stop_recording()
-                
-                self.msg_queue.put({"type": "log", "val": "[System] Transcribing audio..."})
                 transcript = audio.transcribe(audio_data)
-                
+
                 if transcript.strip():
-                    self.msg_queue.put({"type": "log", "val": f"[System] Transcript: {transcript}"})
-                    print(f"\n🎤 You said: {transcript}\n")
-                    
+                    self.msg_queue.put({"type": "text", "val": transcript})
+                    print(f"\n[You] {transcript}\n")
+
                     if was_waiting:
-                        # Resume the paused agent with the user's voice reply
                         agent_module.user_reply_text = transcript
-                        agent_module.user_reply_event.set()  # unblock agent thread
-                        # Agent continues from where it left off — state will be set to done by agent
+                        agent_module.user_reply_event.set()
                     else:
-                        # Normal: start a fresh agent task
-                        result = run_agent(
-                            transcript, 
-                            update_log_callback=lambda m: self.msg_queue.put({"type": "log", "val": m})
+                        run_agent(
+                            transcript,
+                            update_log_callback=lambda m: self.msg_queue.put(
+                                {"type": "text", "val": m}
+                            ),
                         )
                         state.state.set_state("done")
                         self.msg_queue.put({"type": "state", "val": "done"})
                 else:
-                    self.msg_queue.put({"type": "log", "val": "[System] No speech detected."})
                     print("\n[System] No speech detected.\n")
                     state.state.set_state("done")
                     self.msg_queue.put({"type": "state", "val": "done"})
 
-            threading.Thread(target=process_audio, daemon=True).start()
+            threading.Thread(target=process, daemon=True).start()
 
-    def update_ui(self):
+    # ── Main Loop ───────────────────────────────────────────────────────────
+
+    def _tick(self):
         try:
             while True:
                 msg = self.msg_queue.get_nowait()
                 if msg["type"] == "state":
                     self.set_ui_state(msg["val"])
-                elif msg["type"] == "log":
-                    self.add_log(msg["val"])
+                elif msg["type"] == "text":
+                    self.set_label(msg["val"])
         except queue.Empty:
             pass
-            
-        # Run 10 times a second
-        self.root.after(100, self.update_ui)
 
+        self.root.after(100, self._tick)
+
+
+# ── Entry Point ─────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("Starting Orbit Voice Assistant...")
+    print("Starting Orbit Voice Assistant…")
     root = tk.Tk()
-    print("Initializing GUI window...")
+    print("Initializing GUI window…")
     app = VoiceWidget(root)
-    print("==========================================================")
-    print("Widget started! Look for the small floating pill at the top of your screen.")
+    print("=" * 58)
+    print("Widget started! Look for the floating window.")
     print("Press Ctrl+Shift+Space to start recording.")
-    print("==========================================================")
+    print("=" * 58)
     try:
         root.mainloop()
     except KeyboardInterrupt:
-        print("\nExiting...")
+        print("\nExiting…")

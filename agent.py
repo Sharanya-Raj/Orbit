@@ -73,9 +73,10 @@ Describe the layout, all visible windows, and specifically list every interactab
 CRITICAL INSTRUCTIONS:
 1. Pay special attention to elements that could help achieve the user's explicit goal.
 2. If you don't immediately see the exact button needed for the goal, THINK PROACTIVELY. Identify and list other tools or paths that could help (e.g., if you don't see a song, look for and label the "Search" bar or "Home" button).
-3. For EVERY interactable element you list, you MUST provide its spatial bounding box in normalized [ymin, xmin, ymax, xmax] format out of 1000.
+3. EXHAUSTIVE ROW DETAILS: When looking at lists or rows (like song tracks, files, or messages), you MUST identify and bound EVERY single icon or action button inside that row. Do not just box the entire row and ignore the buttons inside it! Find and separately label the "Play" button, "Add to Playlist", "Heart", "Three dots", or any other interactable elements within that specific row.
+4. For EVERY interactable element you list, you MUST provide its spatial bounding box in normalized [ymin, xmin, ymax, xmax] format out of 1000.
 Example: `[150, 400, 200, 500] "Submit" button`
-4. Be extremely precise and tight with your bounding boxes. Do not create wide or large boxes that group multiple items together (like entire navigation bars). Output individual, tight boxes for the exact icons, buttons, or inputs.
+5. Be extremely precise and tight with your bounding boxes. Do not create wide or large boxes that group multiple items together (like entire navigation bars). Output individual, tight boxes for the exact icons, buttons, or inputs.
 
 Do not guess what the user wants to do, just describe what you see accurately based on the prompt.
 CRITICAL: Explicitly state the name of the currently active/focused application or window at the beginning of your description.
@@ -141,8 +142,16 @@ DO NOT trigger this rule just because there is a "Login" or "Sign In" button tuc
 NEVER click "Create account" unless explicitly requested by the user. NEVER output done with a failure just because of a login wall. ALWAYS hand off to the user.
 Example: {"type": "request_user_input", "prompt": "Please sign in to the active window, then press the hotkey and say Okay when you're done.", "context": "os"}
 
+SAFEGUARDS (CRITICAL):
+1. NEVER guess coordinates. Only click on coordinates EXPLICITLY provided by the vision module. If the target is not found, DO NOT click randomly.
+2. NEVER click the Windows taskbar (the bar at the bottom of the screen with app icons). To open or switch to any app, you MUST use the "open_app" action — not click_box on a taskbar icon.
+3. Verify the Active Window: If the vision module reports that an unintended application is open (e.g. Copilot, Claude) when you intended to open a different app (e.g. Discord), you MUST recognize this. Stop and declare failure, or press Window key again to restart the search. DO NOT interact with unintended applications.
+4. Stay strictly on task. Do NOT click or open anything irrelevant to the user's goal.
+5. If you are lost, stuck, or unsure what to do, use {"type": "speak", "text": "I need help finding the right element."} or {"type": "done", "message": "Failed to complete task."} to cleanly exit.
+6. STOP ON COMPLETION: The MOMENT you verify that the User Goal has been achieved (e.g., you successfully clicked the specific requested song, the music player is active, the email sent, etc.), you MUST immediately output the `done` action to stop.
+7. DO NOT DOUBLE-PRESS: If your last action was to click "Play" on a song, assume it is now playing! If you click it a second time, you will pause it. STOP immediately and output {"type": "done", "message": "Goal achieved", "context": "os"}.
+
 General:
-- Return exactly ONE action per JSON response.
 - Verify the previous action succeeded before moving to the next step.
 - Use the "open_app" action to open desktop apps or switch to them if they're already running. Ensure you provide the app name.
 - Typing into search bars: If you use `type_text`, it ONLY types the characters. If you need to submit the search or press Enter, you MUST output a second action: `{"type": "press_key", "key": "Enter", "context": "browser"}` (or "os"). Batch them together when possible: `[{"type": "type_text", "text": "foo", "context": "browser"}, {"type": "press_key", "key": "Enter", "context": "browser"}]`.
@@ -360,28 +369,72 @@ def run_agent(instruction: str, update_log_callback=None) -> str:
                     prompt = action.get("prompt", "Please provide input, then press OK on the widget.")
                     tts.speak(prompt)
                     if update_log_callback:
+                        update_log_callback(f"🤖 Action: {action.get('type')}")
+            # Support batching (an array of actions) or a single action
+            actions = action_data if isinstance(action_data, list) else [action_data]
+            
+            for action in actions:
+                print(f"\n[Agent Thought]: {action.get('thought', 'No thought provided.')}")
+                print(f"[Parsed Action]: {json.dumps(action)}")
+                
+                if update_log_callback:
+                    update_log_callback(f"🧠 Agent Thought: {action.get('thought', 'Deciding...')}")
+                    update_log_callback(f"🤖 Agent Action: {action.get('type')}")
+    
+                logger.log_action(action)
+    
+                if action["type"] == "done":
+                    # Play the completion sound
+                    try:
+                        import pygame
+                        pygame.mixer.init()
+                        pygame.mixer.music.load("sounds/Note_block_chime_scale.ogg")
+                        pygame.mixer.music.play()
+                    except Exception as e:
+                        print(f"Failed to play finish sound: {e}")
+    
+                    msg = action.get("message", "Done.")
+                    logger.log_session_end(msg)
+                    tts.speak(msg)
+                    return msg
+    
+                if action["type"] == "speak":
+                    tts.speak(action["text"])
+    
+                if action["type"] == "request_user_input":
+                    # Speak the prompt so the user knows what to type
+                    prompt = action.get("prompt", "Please provide input, then press OK on the widget.")
+                    tts.speak(prompt)
+                    if update_log_callback:
                         update_log_callback(f"⌨️ Waiting for user input: {prompt}")
-
+    
+                    # Signal the widget to switch to input-waiting mode
                     state.state.set_state("waiting_for_input")
+    
+                    # Block this thread until widget provides the user's voice reply
                     user_reply_event.clear()
-                    user_reply_event.wait(timeout=120)
-
+                    user_reply_event.wait(timeout=120)  # 2-min timeout
+    
                     reply = user_reply_text.strip() or "done"
                     if update_log_callback:
                         update_log_callback(f"🎤 User replied: {reply}")
-
+    
+                    # Inject reply — strongly tell DeepSeek the step is complete and to move forward
                     decision_messages.append({"role": "assistant", "content": json.dumps(action)})
                     decision_messages.append({"role": "user", "content": f"User confirmed (said: '{reply}'). ASSUME THIS STEP IS COMPLETE. Proceed to the NEXT action toward the goal. Do NOT use request_user_input again."})
-                    just_resumed_from_input = True
-                    break  # Stop processing the rest of the batch and get a new vision screenshot
-
-                # 5. Execute OS action
+                    just_resumed_from_input = True  # next iteration must APPEND screen, not overwrite
+                    break  # Break out of the action batch to give control back to the perception loop
+    
+                # 5. Execute OS/Browser action
                 active_page = None
                 if action["type"] == "click_element" or action.get("context") == "browser":
                     active_page = get_browser_page()
                     
                 execute_action(action, page=active_page)
                 time.sleep(0.2)  # Short sleep between batched actions so OS UI can catch up
+            
+            if just_resumed_from_input:
+                continue
 
             # Append the cycle log (the whole batch)
             decision_messages.append({"role": "assistant", "content": json.dumps(action_data)})
