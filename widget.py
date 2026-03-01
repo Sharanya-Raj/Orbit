@@ -78,34 +78,34 @@ def create_round_rect(canvas, x1, y1, x2, y2, radius=25, **kw):
 
 STATE_STYLES = {
     "idle": {
-        "dot": "#4ade80",
-        "text": "#9090a8",
+        "dot": "#F1E4E8",
+        "text": "#E2DCDE",
         "label": "Orbit  ·  Hold to speak",
-        "border": "#3a3a50",
+        "border": "#CEB1BE",
     },
     "recording": {
         "dot": "#f87171",
         "text": "#f0d0d0",
         "label": "Listening…",
-        "border": "#5a3040",
+        "border": "#CEB1BE",
     },
     "thinking": {
         "dot": "#a78bfa",
         "text": "#c8b8f0",
         "label": "Thinking…",
-        "border": "#403058",
+        "border": "#CEB1BE",
     },
     "waiting_for_input": {
         "dot": "#60a5fa",
         "text": "#b0c8f0",
         "label": "What should I say?",
-        "border": "#304058",
+        "border": "#CEB1BE",
     },
     "done": {
-        "dot": "#4ade80",
-        "text": "#9090a8",
+        "dot": "#F1E4E8",
+        "text": "#E2DCDE",
         "label": "Done",
-        "border": "#3a3a50",
+        "border": "#CEB1BE",
     },
 }
 
@@ -167,21 +167,21 @@ class VoiceWidget:
         # Clean border pill — transparent fill, subtle outline
         self.border_pill = create_round_rect(
             self.canvas, p, p, self.W - p, self.H - p,
-            radius=20, fill=T_COLOR, outline="#3a3a50", width=1,
+            radius=20, fill=T_COLOR, outline="#CEB1BE", width=1,
         )
 
         # Status dot — clean, no outline
         dr = self.DOT_R
         self.dot = self.canvas.create_oval(
             self.DOT_X - dr, cy - dr, self.DOT_X + dr, cy + dr,
-            fill="#4ade80", outline="",
+            fill="#F1E4E8", outline="",
         )
 
         # Label text
         self.label = self.canvas.create_text(
             self.DOT_X + 14, cy,
             text="Orbit  ·  Hold to speak",
-            fill="#9090a8",
+            fill="#E2DCDE",
             font=("Segoe UI", 10),
             anchor="w",
         )
@@ -252,8 +252,10 @@ class VoiceWidget:
 
             def process():
                 audio_data = audio.stop_recording()
-                transcript = audio.transcribe(audio_data)
-
+                # transcript = audio.transcribe(audio_data)
+                
+                #hardcoded example
+                transcript = "Open Spotify and play the song 'Shape of You' by Ed Sheeran"
                 if transcript.strip():
                     self.msg_queue.put({"type": "text", "val": transcript})
                     print(f"\n[You] {transcript}\n")
